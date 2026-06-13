@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Notification, desktopCapturer, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Notification, desktopCapturer, Menu, Tray, nativeImage } = require('electron');
 const dns = require('dns').promises;
 const path = require('path');
 const fs = require('fs');
@@ -44,6 +44,8 @@ function sevFromScore(s) {
 }
 
 let mainWindow;
+let tray = null;
+let isQuitting = false;
 let currentScan = null;
 const schedules = {}; // id -> intervalHandle
 
@@ -76,6 +78,43 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  // Küçültünce görev çubuğundan da gizle, sistem tepsisinde dur.
+  mainWindow.on('minimize', (e) => {
+    e.preventDefault();
+    mainWindow.hide();
+    ensureTray();
+  });
+  // Kapatma X'i de tepsiye gönderir; gerçek çıkış için tepsi menüsünden "Çıkış".
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+      ensureTray();
+    }
+  });
+}
+
+function ensureTray() {
+  if (tray) return;
+  const iconPath = path.join(__dirname, '..', '..', 'assets', 'icon.png');
+  let img = nativeImage.createFromPath(iconPath);
+  if (!img.isEmpty()) img = img.resize({ width: 16, height: 16 });
+  tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+  tray.setToolTip('NmapGUI');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'NmapGUI\'yi göster', click: () => showFromTray() },
+    { type: 'separator' },
+    { label: 'Çıkış', click: () => { isQuitting = true; app.quit(); } },
+  ]));
+  tray.on('click', () => showFromTray());
+  tray.on('double-click', () => showFromTray());
+}
+function showFromTray() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 // Yerel menü çubuğunu ("File Edit View...") kaldır
@@ -103,9 +142,12 @@ app.whenReady().then(async () => {
   });
 });
 
+// Pencere tepsiye gizlenebildiği için 'window-all-closed' tetiklenmez. Yine de
+// kullanıcı explicit "Çıkış" dediğinde temizlik yapalım.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform !== 'darwin' && isQuitting) app.quit();
 });
+app.on('before-quit', () => { isQuitting = true; });
 
 // ---------------- nmap ----------------
 ipcMain.handle('nmap:check', async () => {
