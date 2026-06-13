@@ -552,25 +552,57 @@ const NUCLEI_INSTALL =
   "URL=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | grep -o 'https://[^\"]*linux_amd64.zip' | head -1); " +
   "echo \"İndiriliyor: $URL\"; curl -sL \"$URL\" -o /tmp/nuclei.zip && unzip -o /tmp/nuclei.zip -d /usr/local/bin/ nuclei && chmod +x /usr/local/bin/nuclei && nuclei -version";
 
-// Pentest araç kataloğu (WSL'de root olarak çalışır — sudo şifresi gerekmez).
+// Pentest araç kataloğu — phase: 'recon'|'enum'|'exploit'|'post' (kill-chain kanban için).
 const TOOL_CATALOG = [
-  { id: 'nuclei', name: 'Nuclei', desc: 'Şablon tabanlı zafiyet tarayıcı', cat: 'Zafiyet', install: NUCLEI_INSTALL },
-  { id: 'masscan', name: 'Masscan', desc: 'Çok hızlı port tarayıcı (büyük ağlar)', cat: 'Keşif',
+  // RECON
+  { id: 'nmap', name: 'Nmap', desc: 'Port/servis tarayıcı (Windows-doğal)', cat: 'Keşif', phase: 'recon', builtIn: true, install: '' },
+  { id: 'naabu', name: 'Naabu', desc: 'Hızlı port tarayıcı (Go, portable)', cat: 'Keşif', phase: 'recon',
+    install: 'apt-get update && apt-get install -y naabu' },
+  { id: 'masscan', name: 'Masscan', desc: 'Çok hızlı port tarayıcı (büyük ağlar)', cat: 'Keşif', phase: 'recon',
     install: 'apt-get update && apt-get install -y masscan' },
-  { id: 'gobuster', name: 'Gobuster', desc: 'Web dizin/DNS keşfi', cat: 'Web',
+  { id: 'subfinder', name: 'Subfinder', desc: 'Subdomain enumerasyonu (portable)', cat: 'Keşif', phase: 'recon',
+    install: 'apt-get update && apt-get install -y subfinder' },
+  { id: 'amass', name: 'Amass', desc: 'OWASP derinlemesine recon (portable)', cat: 'Keşif', phase: 'recon',
+    install: 'apt-get update && apt-get install -y amass' },
+  { id: 'dnsx', name: 'dnsx', desc: 'DNS toolkit (portable)', cat: 'Keşif', phase: 'recon',
+    install: 'apt-get update && apt-get install -y dnsx' },
+
+  // ENUM
+  { id: 'nuclei', name: 'Nuclei', desc: 'Şablon tabanlı zafiyet tarayıcı', cat: 'Zafiyet', phase: 'enum', install: NUCLEI_INSTALL },
+  { id: 'httpx', name: 'httpx', desc: 'HTTP probe + tek tıkla tech detect (portable)', cat: 'Web', phase: 'enum',
+    install: 'apt-get update && apt-get install -y httpx-toolkit' },
+  { id: 'katana', name: 'Katana', desc: 'Modern web crawler (portable)', cat: 'Web', phase: 'enum',
+    install: 'apt-get update && apt-get install -y katana' },
+  { id: 'gobuster', name: 'Gobuster', desc: 'Web dizin/DNS keşfi (portable)', cat: 'Web', phase: 'enum',
     install: 'apt-get update && apt-get install -y gobuster' },
-  { id: 'nikto', name: 'Nikto', desc: 'Web sunucu zafiyet tarayıcı', cat: 'Web',
+  { id: 'ffuf', name: 'ffuf', desc: 'Hızlı web fuzzer (portable)', cat: 'Web', phase: 'enum',
+    install: 'apt-get update && apt-get install -y ffuf' },
+  { id: 'nikto', name: 'Nikto', desc: 'Web sunucu zafiyet tarayıcı', cat: 'Web', phase: 'enum',
     install: 'apt-get update && apt-get install -y nikto' },
-  { id: 'whatweb', name: 'WhatWeb', desc: 'Web teknoloji tespiti', cat: 'Web',
+  { id: 'whatweb', name: 'WhatWeb', desc: 'Web teknoloji tespiti', cat: 'Web', phase: 'enum',
     install: 'apt-get update && apt-get install -y whatweb' },
-  { id: 'enum4linux', name: 'enum4linux', desc: 'SMB/Samba enumerasyonu', cat: 'Enum',
+  { id: 'enum4linux', name: 'enum4linux', desc: 'SMB/Samba enumerasyonu', cat: 'Enum', phase: 'enum',
     install: 'apt-get update && apt-get install -y enum4linux' },
-  { id: 'searchsploit', name: 'SearchSploit', desc: 'ExploitDB exploit araması (salt-okunur)', cat: 'Exploit',
+
+  // EXPLOIT
+  { id: 'searchsploit', name: 'SearchSploit', desc: 'ExploitDB exploit araması (salt-okunur)', cat: 'Exploit', phase: 'exploit',
     install: 'apt-get update && apt-get install -y exploitdb' },
-  { id: 'hydra', name: 'Hydra', desc: 'Kimlik denemesi (yalnızca engagement+scope)', cat: 'Exploit',
+  { id: 'sqlmap', name: 'sqlmap', desc: 'SQL injection otomasyonu (Python, Windows-doğal)', cat: 'Exploit', phase: 'exploit',
+    install: 'apt-get update && apt-get install -y sqlmap' },
+  { id: 'hydra', name: 'Hydra', desc: 'Kimlik denemesi (yalnızca engagement+scope)', cat: 'Exploit', phase: 'exploit',
     install: 'apt-get update && apt-get install -y hydra' },
-  { id: 'msfconsole', name: 'Metasploit', desc: 'Exploit çerçevesi (arama serbest, çalıştırma kapılı)', cat: 'Exploit',
+  { id: 'msfconsole', name: 'Metasploit', desc: 'Exploit çerçevesi (arama serbest, çalıştırma kapılı)', cat: 'Exploit', phase: 'exploit',
     install: 'apt-get update && apt-get install -y curl && curl -sSL https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb -o /tmp/msfinstall && chmod +x /tmp/msfinstall && /tmp/msfinstall' },
+
+  // POST-EXPLOIT
+  { id: 'chisel', name: 'Chisel', desc: 'TCP/UDP tünel (portable)', cat: 'Pivot', phase: 'post',
+    install: 'apt-get update && apt-get install -y chisel' },
+  { id: 'hashcat', name: 'Hashcat', desc: 'Hash kırma (GPU/CPU)', cat: 'Şifre', phase: 'post',
+    install: 'apt-get update && apt-get install -y hashcat' },
+  { id: 'john', name: 'John the Ripper', desc: 'Klasik şifre kırıcı', cat: 'Şifre', phase: 'post',
+    install: 'apt-get update && apt-get install -y john' },
+  { id: 'netexec', name: 'NetExec', desc: 'AD/SMB lateral movement (eski CME)', cat: 'AD', phase: 'post',
+    install: 'apt-get update && apt-get install -y python3-pip && pipx install netexec' },
 ];
 ipcMain.handle('tools:catalog', async () => TOOL_CATALOG);
 

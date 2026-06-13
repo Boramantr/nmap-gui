@@ -180,6 +180,14 @@ const NSE_SCRIPTS = [
   { id: 'ssl-heartbleed', cat: 'Zafiyet', desc: 'Heartbleed zafiyeti' },
 ];
 const DEVICE_ICONS = { router: '📶', phone: '📱', printer: '🖨️', camera: '📷', computer: '🖥️', unknown: '❓' };
+
+// Kill-chain fazları (Kanban kolonları için).
+const KILL_CHAIN = [
+  { id: 'recon',   title: 'KEŞİF',   icon: '🛰️', color: '#1e3a5f', desc: 'Hedef tespiti ve yüzey alanı haritalama' },
+  { id: 'enum',    title: 'ENUM',    icon: '🔍', color: '#6b4513', desc: 'Servis, zafiyet ve içerik enumerasyonu' },
+  { id: 'exploit', title: 'EXPLOIT', icon: '💥', color: '#6b1d1d', desc: 'Zafiyetlerden faydalanma' },
+  { id: 'post',    title: 'POST',    icon: '👻', color: '#4a2358', desc: 'Sonrası: pivot, kimlik kırma, lateral' },
+];
 const NAV_ICONS = { scan: '🎯', engagement: '🗂️', tools: '🧰', osint: '🌐', history: '🕘', scripts: '📜', settings: '⚙️' };
 
 // Açık porta göre önerilen enumerasyon aracı (servise özel oto-enum).
@@ -1629,126 +1637,97 @@ function App() {
 
       {/* ---------- TOOLS VIEW ---------- */}
       {view === 'tools' && (
-        <div className="page">
-          <h2>🧰 {t.tools}</h2>
-
-          {/* ---------- Portable araçlar (WSL'siz) ---------- */}
-          <div className="portable-hero">
-            <div className="ph-left">
-              <div className="ph-title">⚡ Portable Araçlar <span className="ph-badge">WSL gerekmez</span></div>
-              <div className="ph-desc">Go ile yazılmış pentest araçlarının resmi Windows binary'lerini GitHub release'lerden indirip
-                uygulamanın veri klasörüne kurar. Yeniden başlatma, UAC veya WSL kurulumu yok.</div>
+        <div className="page tools-page">
+          <div className="tools-head">
+            <h2>🧰 {t.tools}</h2>
+            <div className="tools-head-actions">
+              <button className="primary" disabled={portableBusy} onClick={installAllPortable}>
+                {portableBusy ? '⏳ İndiriliyor...' : '⚡ Tüm portable\'ları kur'}</button>
+              {isWin && toolStatus.wsl && (
+                <button className="export" disabled={installingTool} onClick={() => installTool('all')}>
+                  {installingTool === 'all' ? 'WSL kuruluyor...' : '🐧 WSL araçları'}</button>
+              )}
+              <button className="export" onClick={() => { refreshTools(); refreshPortable(); }}>↻</button>
             </div>
-            <button className="primary" disabled={portableBusy} onClick={installAllPortable}>
-              {portableBusy ? '⏳ Sırayla indiriliyor...' : '⬇ Tüm portable araçları kur'}</button>
           </div>
-          <div className="portable-grid">
-            {Object.entries(portableStatus).filter(([, s]) => s.supported).map(([id, s]) => {
-              const prog = portableProg[id];
-              const installing = prog && prog.phase !== 'done' && prog.phase !== undefined && !s.installed && prog.pct < 100;
-              return (
-                <div key={id} className={'portable-card' + (s.installed ? ' installed' : '')}>
-                  <div className="pc-head">
-                    <b>{id}</b>
-                    {s.installed
-                      ? <span className="pc-state ok">✓ portable kurulu</span>
-                      : <span className="pc-state no">○ kurulu değil</span>}
-                  </div>
-                  {s.installed && <div className="pc-path mono small" title={s.path}>{s.path}</div>}
-                  {installing && (
-                    <div className="pc-prog">
-                      <div className="pc-bar"><div className="pc-bar-fill" style={{ width: (prog.pct || 0) + '%' }}></div></div>
-                      <div className="pc-msg small muted">{prog.msg}</div>
-                    </div>
-                  )}
-                  <div className="pc-actions">
-                    {!s.installed && (
-                      <button className="primary" disabled={installing || portableBusy} onClick={() => installPortable(id)}>
-                        {installing ? `⬇ %${prog.pct || 0}` : '⬇ Portable kur'}</button>
-                    )}
-                    {s.installed && (
-                      <>
-                        <button className="export" onClick={() => installPortable(id)}>↻ Güncelle</button>
-                        <button className="export" onClick={() => uninstallPortable(id)}>🗑 Kaldır</button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <p className="muted small">İpucu: Portable kurulu araçlar her tür komutta öncelikli olarak çalışır;
-            WSL kurulu olsa bile portable binary tercih edilir (daha hızlı, ek bağımlılık yok).</p>
 
-          <h3 className="section-title">🐧 WSL Tabanlı Araçlar (gelişmiş)</h3>
-          <div className="wsl-status">
-            {toolStatus.wsl
-              ? <span className="badge ok">● {isWin ? 'WSL hazır' : 'Yerel kabuk hazır'}</span>
-              : <span className="badge bad">● WSL yok — pentest araçları için gerekli</span>}
+          {/* Runtime durum şeridi (kompakt) */}
+          <div className="runtime-bar">
+            <span className={'rt-chip ' + (nmap.installed ? 'ok' : 'no')}>nmap {nmap.installed ? '✓' : '✕'}</span>
+            <span className={'rt-chip ok'}>portable {Object.values(portableStatus).filter((s) => s.installed).length}/{Object.values(portableStatus).filter((s) => s.supported).length}</span>
+            {isWin && <span className={'rt-chip ' + (toolStatus.wsl ? 'ok' : 'no')}>WSL {toolStatus.wsl ? '✓' : '✕'}</span>}
             {isWin && !toolStatus.wsl && (
-              <>
-                <button className="primary" style={{ width: 'auto', margin: 0 }} onClick={installWsl}>⬇ WSL'i otomatik kur (root)</button>
-                <button className="export" onClick={prepareRoot}>⚙️ Distroyu hazırla</button>
-                <p className="muted">Root distro olarak kurulur — <b>kullanıcı/şifre sorusu çıkmaz</b>. UAC onayı verin, kurulum bitince
-                  <b> bilgisayarı yeniden başlatın</b>, sonra "Distroyu hazırla" → "Yenile".</p>
-              </>
+              <button className="rt-act" onClick={installWsl}>⬇ WSL kur</button>
             )}
-            {toolStatus.wsl && (
-              <button className="primary" style={{ width: 'auto', margin: 0 }}
-                disabled={installingTool} onClick={() => installTool('all')}>
-                {installingTool === 'all' ? 'Tümü kuruluyor...' : '⬇ Tüm araçları tek tıkla kur'}</button>
-            )}
-            <button className="export" onClick={refreshTools}>↻ Yenile</button>
           </div>
 
-          <div className="tool-grid">
-            {/* nmap her zaman var (Windows-doğal) */}
-            <div className="tool-card">
-              <div className="tc-head"><b>Nmap</b><span className="tc-cat">Keşif</span></div>
-              <div className="tc-desc">Port/servis tarayıcı (Windows-doğal)</div>
-              <span className={'tc-status ' + (nmap.installed ? 'ok' : 'no')}>{nmap.installed ? '✓ kurulu' : '✕ yok'}</span>
-            </div>
-            {toolCatalog.map((tl) => {
-              const found = toolStatus.tools[tl.id];
-              const isPortable = toolStatus.portable && toolStatus.portable[tl.id];
-              const portableSupported = portableStatus[tl.id] && portableStatus[tl.id].supported;
-              const prog = portableProg[tl.id];
-              const portableInstalling = prog && prog.phase !== 'done' && (prog.pct || 0) < 100 && !(portableStatus[tl.id] && portableStatus[tl.id].installed);
-              const wslInstalling = installingTool === tl.id;
-              const busy = portableInstalling || wslInstalling;
-
-              // Akıllı kur: portable destekleniyorsa portable, yoksa WSL hazırsa WSL,
-              // hiçbiri yoksa WSL kurulumunu başlat.
-              const smartInstall = () => {
-                if (busy) return;
-                if (portableSupported) return installPortable(tl.id);
-                if (toolStatus.wsl) return installTool(tl.id);
-                toast('Bu araç WSL gerektirir. Önce yukarıdan WSL kurulumunu başlatın.', 'warn');
-                installWsl();
-              };
-              const label = (() => {
-                if (portableInstalling) return `⬇ %${prog.pct || 0}`;
-                if (wslInstalling) return 'Kuruluyor...';
-                if (portableSupported) return '⬇ Portable kur';
-                if (toolStatus.wsl) return '⬇ WSL\'e kur';
-                return '⬇ Kur (WSL gerekir)';
-              })();
-
+          {/* ============== KILL-CHAIN KANBAN ============== */}
+          <div className="kanban">
+            {KILL_CHAIN.map((col) => {
+              const colTools = toolCatalog.filter((tl) => tl.phase === col.id);
               return (
-                <div key={tl.id} className="tool-card">
-                  <div className="tc-head"><b>{tl.name}</b><span className="tc-cat">{tl.cat}</span></div>
-                  <div className="tc-desc">{tl.desc}</div>
-                  <span className={'tc-status ' + (found ? 'ok' : 'no')}>
-                    {found ? (isPortable ? '✓ portable kurulu' : '✓ WSL\'de kurulu') : '✕ kurulu değil'}
-                  </span>
-                  {!found && (
-                    <button className="tc-install" disabled={busy} onClick={smartInstall}>{label}</button>
-                  )}
-                  {portableInstalling && (
-                    <div className="pc-bar" style={{ marginTop: 6 }}>
-                      <div className="pc-bar-fill" style={{ width: (prog.pct || 0) + '%' }}></div>
+                <div key={col.id} className="kb-col">
+                  <div className="kb-head" style={{ background: col.color }}>
+                    <div className="kb-h-left">
+                      <span className="kb-h-ic">{col.icon}</span>
+                      <div>
+                        <div className="kb-h-title">{col.title}</div>
+                        <div className="kb-h-desc">{col.desc}</div>
+                      </div>
                     </div>
-                  )}
+                    <span className="kb-h-count">{colTools.length}</span>
+                  </div>
+                  <div className="kb-body">
+                    {colTools.map((tl) => {
+                      const found = toolStatus.tools[tl.id] || tl.builtIn;
+                      const isPortable = toolStatus.portable && toolStatus.portable[tl.id];
+                      const portableSupported = portableStatus[tl.id] && portableStatus[tl.id].supported;
+                      const prog = portableProg[tl.id];
+                      const portableInstalling = prog && prog.phase !== 'done' && (prog.pct || 0) < 100 && !(portableStatus[tl.id] && portableStatus[tl.id].installed);
+                      const wslInstalling = installingTool === tl.id;
+                      const busy = portableInstalling || wslInstalling;
+                      const stateLabel = tl.builtIn ? 'Dahili' : (isPortable ? 'Portable' : (found ? 'WSL' : 'Yok'));
+                      const stateClass = found ? 'ok' : 'no';
+                      const smartInstall = () => {
+                        if (busy || tl.builtIn) return;
+                        if (portableSupported) return installPortable(tl.id);
+                        if (toolStatus.wsl) return installTool(tl.id);
+                        toast('Bu araç WSL gerektirir.', 'warn');
+                        installWsl();
+                      };
+                      const btnLabel = (() => {
+                        if (portableInstalling) return `⬇ %${prog.pct || 0}`;
+                        if (wslInstalling) return '...';
+                        if (portableSupported) return '⬇ Portable';
+                        if (toolStatus.wsl) return '⬇ WSL';
+                        return '⬇ Kur';
+                      })();
+                      return (
+                        <div key={tl.id} className={'kb-card ' + (found ? 'on' : 'off')}>
+                          <div className="kb-c-bar" style={{ background: found ? '#22c55e' : '#3a3a40' }}></div>
+                          <div className="kb-c-main">
+                            <div className="kb-c-head">
+                              <b>{tl.name}</b>
+                              <span className={'kb-c-st ' + stateClass}>{stateLabel}</span>
+                            </div>
+                            <div className="kb-c-desc">{tl.desc}</div>
+                            {portableInstalling && (
+                              <div className="pc-bar"><div className="pc-bar-fill" style={{ width: (prog.pct || 0) + '%' }}></div></div>
+                            )}
+                            {!found && !tl.builtIn && (
+                              <button className="kb-c-btn" disabled={busy} onClick={smartInstall}>{btnLabel}</button>
+                            )}
+                            {found && !tl.builtIn && portableSupported && (
+                              <div className="kb-c-actions">
+                                <button className="kb-c-mini" onClick={() => installPortable(tl.id)}>↻</button>
+                                <button className="kb-c-mini" onClick={() => uninstallPortable(tl.id)}>🗑</button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}

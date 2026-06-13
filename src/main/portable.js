@@ -47,6 +47,51 @@ const REGISTRY = {
       darwin: { repo: 'projectdiscovery/subfinder', assetPattern: /subfinder_.*_macOS_(arm64|amd64)\.zip$/i, binInZip: 'subfinder' },
     },
   },
+  naabu: {
+    name: 'Naabu',
+    platforms: {
+      win32: { repo: 'projectdiscovery/naabu', assetPattern: /naabu_.*_windows_amd64\.zip$/i, binInZip: 'naabu.exe' },
+      linux: { repo: 'projectdiscovery/naabu', assetPattern: /naabu_.*_linux_amd64\.zip$/i, binInZip: 'naabu' },
+    },
+  },
+  katana: {
+    name: 'Katana',
+    platforms: {
+      win32: { repo: 'projectdiscovery/katana', assetPattern: /katana_.*_windows_amd64\.zip$/i, binInZip: 'katana.exe' },
+      linux: { repo: 'projectdiscovery/katana', assetPattern: /katana_.*_linux_amd64\.zip$/i, binInZip: 'katana' },
+      darwin: { repo: 'projectdiscovery/katana', assetPattern: /katana_.*_macOS_(arm64|amd64)\.zip$/i, binInZip: 'katana' },
+    },
+  },
+  dnsx: {
+    name: 'dnsx',
+    platforms: {
+      win32: { repo: 'projectdiscovery/dnsx', assetPattern: /dnsx_.*_windows_amd64\.zip$/i, binInZip: 'dnsx.exe' },
+      linux: { repo: 'projectdiscovery/dnsx', assetPattern: /dnsx_.*_linux_amd64\.zip$/i, binInZip: 'dnsx' },
+    },
+  },
+  ffuf: {
+    name: 'ffuf',
+    platforms: {
+      win32: { repo: 'ffuf/ffuf', assetPattern: /ffuf_.*_windows_amd64\.zip$/i, binInZip: 'ffuf.exe' },
+      linux: { repo: 'ffuf/ffuf', assetPattern: /ffuf_.*_linux_amd64\.tar\.gz$/i, binInZip: 'ffuf' },
+      darwin: { repo: 'ffuf/ffuf', assetPattern: /ffuf_.*_macOS_(arm64|amd64)\.tar\.gz$/i, binInZip: 'ffuf' },
+    },
+  },
+  amass: {
+    name: 'Amass',
+    platforms: {
+      win32: { repo: 'owasp-amass/amass', assetPattern: /amass_Windows_amd64\.zip$/i, binInZip: 'amass.exe' },
+      linux: { repo: 'owasp-amass/amass', assetPattern: /amass_Linux_amd64\.zip$/i, binInZip: 'amass' },
+      darwin: { repo: 'owasp-amass/amass', assetPattern: /amass_Darwin_(arm64|amd64)\.zip$/i, binInZip: 'amass' },
+    },
+  },
+  chisel: {
+    name: 'Chisel',
+    platforms: {
+      win32: { repo: 'jpillora/chisel', assetPattern: /chisel_.*_windows_amd64\.gz$/i, binInZip: 'chisel.exe' },
+      linux: { repo: 'jpillora/chisel', assetPattern: /chisel_.*_linux_amd64\.gz$/i, binInZip: 'chisel' },
+    },
+  },
 };
 
 let binRoot = null;
@@ -119,14 +164,22 @@ function downloadFile(url, dest, onProgress, redirects = 0) {
 
 // .zip -> PowerShell Expand-Archive (Windows built-in)
 // .tar.gz -> tar (Linux/macOS built-in; Windows 10+ tar.exe da var)
-function extractArchive(archivePath, destDir) {
+function extractArchive(archivePath, destDir, binName) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(destDir, { recursive: true });
-    const isTar = /\.tar\.gz$|\.tgz$/i.test(archivePath);
-    if (isTar) {
+    const lower = archivePath.toLowerCase();
+    if (/\.tar\.gz$|\.tgz$/.test(lower)) {
       exec(`tar -xzf "${archivePath}" -C "${destDir}"`, { windowsHide: true }, (err) => err ? reject(err) : resolve());
+    } else if (lower.endsWith('.gz')) {
+      // Plain gzip (tek dosya, örn. chisel_*_windows_amd64.gz -> chisel.exe)
+      const zlib = require('zlib');
+      const target = path.join(destDir, binName || path.basename(archivePath).replace(/\.gz$/i, ''));
+      const inp = fs.createReadStream(archivePath);
+      const out = fs.createWriteStream(target);
+      inp.pipe(zlib.createGunzip()).pipe(out)
+        .on('finish', () => resolve())
+        .on('error', reject);
     } else {
-      // Expand-Archive PS 5+'ta her zaman var; Linux/macOS'ta unzip
       const cmd = process.platform === 'win32'
         ? `powershell -NoProfile -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force"`
         : `unzip -o "${archivePath}" -d "${destDir}"`;
@@ -172,7 +225,7 @@ async function install(id, onProgress = () => {}) {
   onProgress({ phase: 'extract', pct: 0, msg: 'Açılıyor...' });
   const stageDir = path.join(toolDir, '_stage');
   try { fs.rmSync(stageDir, { recursive: true, force: true }); } catch (e) {}
-  await extractArchive(archive, stageDir);
+  await extractArchive(archive, stageDir, meta.binInZip);
   fs.unlink(archive, () => {});
 
   const found = findBin(stageDir, meta.binInZip);
