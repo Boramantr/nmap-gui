@@ -181,6 +181,27 @@ const NSE_SCRIPTS = [
 ];
 const DEVICE_ICONS = { router: '📶', phone: '📱', printer: '🖨️', camera: '📷', computer: '🖥️', unknown: '❓' };
 
+// Launcher şablonları — her araç için minimum gerekli alan ve hedef ipucu.
+//   target: input placeholder
+//   fields: ek opsiyonel alanlar [{ key, label, placeholder, default }]
+const TOOL_LAUNCHERS = {
+  naabu:      { target: '192.168.0.0/24 veya example.com', hint: 'Hızlı port keşfi',          fields: [{ key: 'ports', label: 'Portlar (boş=top1000)', placeholder: '1-65535 veya 80,443' }] },
+  masscan:    { target: '192.168.0.0/24',                  hint: 'Çok hızlı port tarama',    fields: [{ key: 'ports', label: 'Portlar', default: '1-1000' }, { key: 'rate', label: 'Hız (paket/sn)', default: '1000' }] },
+  subfinder:  { target: 'example.com',                     hint: 'Pasif subdomain keşfi',    fields: [] },
+  amass:      { target: 'example.com',                     hint: 'OWASP derin recon (yavaş)', fields: [] },
+  dnsx:       { target: 'example.com',                     hint: 'Tüm DNS kayıtları',        fields: [] },
+  httpx:      { target: 'https://example.com',             hint: 'HTTP tech / başlık / kod', fields: [] },
+  katana:     { target: 'https://example.com',             hint: 'Web crawler (derinlik 2)', fields: [] },
+  gobuster:   { target: 'https://example.com',             hint: 'Dizin brute-force',        fields: [{ key: 'wordlist', label: 'Wordlist yolu (WSL içi)', default: '/usr/share/wordlists/dirb/common.txt' }] },
+  ffuf:       { target: 'https://example.com/FUZZ veya https://example.com', hint: 'Hızlı web fuzzer', fields: [{ key: 'wordlist', label: 'Wordlist', default: '/usr/share/wordlists/dirb/common.txt' }] },
+  nikto:      { target: 'https://example.com',             hint: 'Web sunucu zafiyet tarama', fields: [] },
+  whatweb:    { target: 'https://example.com',             hint: 'Teknoloji parmak izi',     fields: [] },
+  enum4linux: { target: '192.168.0.10',                    hint: 'SMB / Samba enum',         fields: [] },
+  sqlmap:     { target: 'https://example.com/page?id=1',   hint: 'SQL injection testi',      fields: [] },
+  hashcat:    { target: '/path/to/hashes.txt (WSL içi)',   hint: 'Hash kırma',               fields: [{ key: 'mode', label: 'Hash modu (-m)', default: '0', placeholder: '0=MD5, 1000=NTLM, 22000=WPA' }, { key: 'wordlist', label: 'Wordlist', default: '/usr/share/wordlists/rockyou.txt' }] },
+  john:       { target: '/path/to/hashes.txt (WSL içi)',   hint: 'John the Ripper',          fields: [{ key: 'wordlist', label: 'Wordlist', default: '/usr/share/wordlists/rockyou.txt' }] },
+};
+
 // Kill-chain fazları (Kanban kolonları için).
 const KILL_CHAIN = [
   { id: 'recon',   title: 'KEŞİF',   icon: '🛰️', color: '#1e3a5f', desc: 'Hedef tespiti ve yüzey alanı haritalama' },
@@ -623,6 +644,7 @@ function App() {
   const [evidence, setEvidence] = useState([]);
   const [diffPick, setDiffPick] = useState([]);
   const [diffResult, setDiffResult] = useState(null);
+  const [launcher, setLauncher] = useState(null); // { tool, target, opts }
   const [portableStatus, setPortableStatus] = useState({}); // id -> {supported, installed, path}
   const [portableProg, setPortableProg] = useState({}); // id -> {phase, pct, msg}
   const [portableBusy, setPortableBusy] = useState(false);
@@ -844,6 +866,29 @@ function App() {
       const total = Object.values(r.results).reduce((a, l) => a + l.length, 0);
       toast(`${total} olası exploit eşleşti`, total > 0 ? 'warn' : 'success');
     } else toast('Hata: ' + r.error, 'error');
+  };
+
+  // Bir aracı launcher modalıyla aç (akıllı hedef varsayılanı)
+  const openLauncher = (tool) => {
+    const meta = TOOL_LAUNCHERS[tool];
+    if (!meta) { runTool(tool, target || ''); return; }
+    const defaultTarget = (selHost && selHost.ip) || target || '';
+    const opts = {}; (meta.fields || []).forEach((f) => { if (f.default) opts[f.key] = f.default; });
+    setLauncher({ tool, target: defaultTarget, opts });
+  };
+  const submitLauncher = () => {
+    if (!launcher) return;
+    const { tool, target: lt, opts } = launcher;
+    if (!lt.trim()) { toast('Hedef gerekli', 'warn'); return; }
+    // Engagement modunda scope kontrolü
+    if (activeWs && activeWs.mode === 'engagement') {
+      const ok = inScopeList(lt, activeWs.scope);
+      if (ok === false) { toast(t.scopeBlock, 'error'); return; }
+    }
+    setLauncher(null);
+    if (tool === 'nuclei') { setNucleiTarget(lt); setView('tools'); runNuclei(lt); return; }
+    if (tool === 'searchsploit') { searchExploit(lt); return; }
+    runTool(tool, lt.trim(), opts);
   };
 
   // Sonraki adım önerisini çalıştır
@@ -1111,6 +1156,35 @@ function App() {
       <div className="toasts">
         {toasts.map((ts) => <div key={ts.id} className={'toast ' + ts.type}>{ts.msg}</div>)}
       </div>
+
+      {launcher && (() => {
+        const meta = TOOL_LAUNCHERS[launcher.tool] || {};
+        return (
+          <div className="overlay" onClick={(e) => { if (e.target.className === 'overlay') setLauncher(null); }}>
+            <div className="modal launcher-modal">
+              <h2>▶ {launcher.tool}</h2>
+              <p className="muted small" style={{ marginTop: -4 }}>{meta.hint || 'Aracı çalıştır'}</p>
+              <label>Hedef</label>
+              <input type="text" autoFocus placeholder={meta.target || ''} value={launcher.target}
+                onChange={(e) => setLauncher({ ...launcher, target: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && submitLauncher()} />
+              {(meta.fields || []).map((f) => (
+                <div key={f.key} style={{ marginTop: 10 }}>
+                  <label>{f.label}</label>
+                  <input type="text" placeholder={f.placeholder || f.default || ''}
+                    value={launcher.opts[f.key] || ''}
+                    onChange={(e) => setLauncher({ ...launcher, opts: { ...launcher.opts, [f.key]: e.target.value } })}
+                    onKeyDown={(e) => e.key === 'Enter' && submitLauncher()} />
+                </div>
+              ))}
+              <div className="actions">
+                <button className="btn-accept" onClick={submitLauncher}>▶ Çalıştır</button>
+                <button className="btn-cancel" onClick={() => setLauncher(null)}>İptal</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {toolConsole.open && (
         <div className="overlay" onClick={(e) => { if (e.target.className === 'overlay') setToolConsole((c) => ({ ...c, open: false })); }}>
@@ -1717,10 +1791,13 @@ function App() {
                             {!found && !tl.builtIn && (
                               <button className="kb-c-btn" disabled={busy} onClick={smartInstall}>{btnLabel}</button>
                             )}
+                            {(found || tl.builtIn) && TOOL_LAUNCHERS[tl.id] && (
+                              <button className="kb-c-run" onClick={() => openLauncher(tl.id)}>▶ Çalıştır</button>
+                            )}
                             {found && !tl.builtIn && portableSupported && (
                               <div className="kb-c-actions">
-                                <button className="kb-c-mini" onClick={() => installPortable(tl.id)}>↻</button>
-                                <button className="kb-c-mini" onClick={() => uninstallPortable(tl.id)}>🗑</button>
+                                <button className="kb-c-mini" title="Güncelle" onClick={() => installPortable(tl.id)}>↻</button>
+                                <button className="kb-c-mini" title="Kaldır" onClick={() => uninstallPortable(tl.id)}>🗑</button>
                               </div>
                             )}
                           </div>

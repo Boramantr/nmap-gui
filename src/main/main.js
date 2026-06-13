@@ -790,6 +790,18 @@ const RUN_TEMPLATES = {
     '-w', o.wordlist || '/usr/share/wordlists/dirb/common.txt', '-q'] }),
   nikto: (target) => ({ tool: 'nikto', args: ['-h', target] }),
   whatweb: (target) => ({ tool: 'whatweb', args: [target] }),
+  // --- yeni portable Go araçları ---
+  naabu: (target, o) => ({ tool: 'naabu', args: ['-host', target, '-silent', ...(o.ports ? ['-p', o.ports] : ['-top-ports', '1000'])] }),
+  subfinder: (target) => ({ tool: 'subfinder', args: ['-d', target, '-silent'] }),
+  amass: (target) => ({ tool: 'amass', args: ['enum', '-d', target, '-passive'] }),
+  dnsx: (target) => ({ tool: 'dnsx', args: ['-d', target, '-a', '-aaaa', '-cname', '-mx', '-ns', '-txt', '-resp', '-silent'] }),
+  httpx: (target) => ({ tool: 'httpx', args: ['-u', target, '-silent', '-status-code', '-title', '-tech-detect', '-server', '-no-color'] }),
+  katana: (target) => ({ tool: 'katana', args: ['-u', target, '-silent', '-d', '2', '-no-color'] }),
+  ffuf: (target, o) => ({ tool: 'ffuf', args: ['-u', (target.includes('FUZZ') ? target : target.replace(/\/?$/, '/FUZZ')),
+    '-w', o.wordlist || '/usr/share/wordlists/dirb/common.txt', '-mc', '200,204,301,302,307,401,403', '-s'] }),
+  sqlmap: (target) => ({ tool: 'sqlmap', args: ['-u', target, '--batch', '--level=1', '--risk=1'] }),
+  hashcat: (target, o) => ({ tool: 'hashcat', args: ['-m', String(o.mode || '0'), '-a', '0', target, o.wordlist || '/usr/share/wordlists/rockyou.txt'] }),
+  john: (target, o) => ({ tool: 'john', args: ['--wordlist=' + (o.wordlist || '/usr/share/wordlists/rockyou.txt'), target] }),
 };
 let currentTool = null;
 ipcMain.handle('tool:run', async (e, { tool, target, opts }) => {

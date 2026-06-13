@@ -843,3 +843,12 @@ header button, header select, header input, header .nav-ic, .ws-box, .avatar-wra
 @media (max-width: 1100px) {
   .kanban { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Kanban kartı: Çalıştır butonu */
+.kb-c-run { width: 100%; margin-top: 6px; padding: 6px; background: transparent; border: 1px solid var(--green);
+  color: var(--green); border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 700; }
+.kb-c-run:hover { background: color-mix(in srgb, var(--green) 15%, transparent); }
+
+.launcher-modal { max-width: 460px; }
+.launcher-modal label { font-size: 12px; color: var(--muted); margin: 8px 0 4px; display: block; }
+.launcher-modal input[type="text"] { font-size: 13px; }
