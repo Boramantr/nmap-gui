@@ -78,6 +78,8 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  // Pencereli tam ekran (maximized) — ekran sınırlarına kadar, ama yine sürüklenebilir.
+  mainWindow.once('ready-to-show', () => { mainWindow.maximize(); mainWindow.show(); });
 
   // Küçültünce görev çubuğundan da gizle, sistem tepsisinde dur.
   mainWindow.on('minimize', (e) => {

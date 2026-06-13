@@ -770,14 +770,16 @@ header button, header select, header input, header .nav-ic, .ws-box, .avatar-wra
 .diff-ver-row { font-size: 11.5px; padding: 3px 0; display: flex; gap: 8px; align-items: center; }
 
 /* ===== Portable araç bölümü ===== */
-.portable-hero { display: flex; align-items: center; gap: 18px; padding: 16px 18px; margin: 8px 0 16px;
-  border: 1px solid var(--border); border-radius: 14px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), var(--panel-2)); }
-.ph-left { flex: 1; min-width: 0; }
-.ph-title { font-size: 15px; font-weight: 800; margin-bottom: 4px; }
-.ph-badge { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 10px;
-  font-size: 10.5px; font-weight: 700; background: var(--green); color: #fff; vertical-align: middle; }
-.ph-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.portable-hero { display: flex; align-items: center; gap: 20px; padding: 18px 22px; margin: 8px 0 18px;
+  border: 1px solid var(--border); border-radius: 14px; flex-wrap: nowrap;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), var(--panel-2)); }
+.ph-left { flex: 1 1 auto; min-width: 0; }
+.ph-title { font-size: 16px; font-weight: 800; margin-bottom: 6px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 10px; }
+.ph-badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 10px;
+  font-size: 10.5px; font-weight: 700; background: var(--green); color: #fff; white-space: nowrap; }
+.ph-desc { font-size: 12.5px; color: var(--muted); line-height: 1.55; max-width: 720px; }
+.portable-hero > button { flex: 0 0 auto; white-space: nowrap; padding: 11px 22px; width: auto !important; margin: 0 !important; }
 
 .portable-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .portable-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--panel-2); display: flex; flex-direction: column; gap: 8px; }
