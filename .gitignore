@@ -1,0 +1,19 @@
+# Bağımlılıklar
+node_modules/
+
+# Derleme çıktıları
+dist/
+release/
+src/renderer/app.js
+
+# Üretilen tasarım/önizleme görselleri (büyük, gerekmez)
+designs/
+
+# Loglar
+*.log
+out.log
+err.log
+
+# OS
+Thumbs.db
+.DS_Store

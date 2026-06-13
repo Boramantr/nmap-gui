@@ -1,0 +1,45 @@
+{
+  "name": "nmap-gui",
+  "version": "0.1.0",
+  "description": "Herkesin kullanabileceği basitleştirilmiş nmap arayüzü",
+  "main": "src/main/main.js",
+  "scripts": {
+    "build": "node build-logos.js && node build-renderer.js",
+    "start": "node build-logos.js && node build-renderer.js && electron .",
+    "dist": "node build-logos.js && node build-renderer.js && electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.35.1",
+    "simple-icons": "^16.23.0"
+  },
+  "build": {
+    "appId": "com.example.nmapgui",
+    "productName": "NmapGUI",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "!src/renderer/vendor/babel.js",
+      "!src/renderer/app.jsx"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico"
+    }
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.8.0",
+    "sql.js": "^1.14.1"
+  }
+}
