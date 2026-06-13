@@ -581,8 +581,8 @@ const TOOL_CATALOG = [
     install: 'apt-get update && apt-get install -y nikto' },
   { id: 'whatweb', name: 'WhatWeb', desc: 'Web teknoloji tespiti', cat: 'Web', phase: 'enum',
     install: 'apt-get update && apt-get install -y whatweb' },
-  { id: 'enum4linux', name: 'enum4linux', desc: 'SMB/Samba enumerasyonu', cat: 'Enum', phase: 'enum',
-    install: 'apt-get update && apt-get install -y enum4linux' },
+  { id: 'enum4linux', name: 'enum4linux-ng', desc: 'SMB/Samba enumerasyonu (modern halefi)', cat: 'Enum', phase: 'enum',
+    install: 'apt-get update && apt-get install -y pipx smbclient && pipx ensurepath && pipx install --force enum4linux-ng && ln -sf /root/.local/bin/enum4linux-ng /usr/local/bin/enum4linux-ng && ln -sf /root/.local/bin/enum4linux-ng /usr/local/bin/enum4linux && /usr/local/bin/enum4linux -h | head -1' },
 
   // EXPLOIT
   { id: 'searchsploit', name: 'SearchSploit', desc: 'ExploitDB exploit araması (salt-okunur)', cat: 'Exploit', phase: 'exploit',
@@ -602,7 +602,7 @@ const TOOL_CATALOG = [
   { id: 'john', name: 'John the Ripper', desc: 'Klasik şifre kırıcı', cat: 'Şifre', phase: 'post',
     install: 'apt-get update && apt-get install -y john' },
   { id: 'netexec', name: 'NetExec', desc: 'AD/SMB lateral movement (eski CME)', cat: 'AD', phase: 'post',
-    install: 'apt-get update && apt-get install -y pipx python3-venv git && pipx ensurepath && pipx install --force netexec && ln -sf /root/.local/bin/netexec /usr/local/bin/netexec && /usr/local/bin/netexec --version' },
+    install: 'apt-get update && apt-get install -y pipx python3-venv git build-essential libssl-dev libffi-dev libsasl2-dev libldap2-dev krb5-multidev python3-dev && pipx ensurepath && pipx install --force git+https://github.com/Pennyw0rth/NetExec.git && ln -sf /root/.local/bin/netexec /usr/local/bin/netexec 2>/dev/null; ln -sf /root/.local/bin/nxc /usr/local/bin/nxc 2>/dev/null; /usr/local/bin/netexec --version' },
 ];
 ipcMain.handle('tools:catalog', async () => TOOL_CATALOG);
 
@@ -674,13 +674,15 @@ function runInstall(script, label) {
 }
 ipcMain.handle('tools:install', async (e, toolId) => {
   if (toolId === 'all') {
-    // Tüm araçları tek komutta kur (apt olanlar + nuclei).
-    const aptTools = TOOL_CATALOG.filter((x) => x.id !== 'nuclei').map((x) => x.id).join(' ');
-    const script = `apt-get update && apt-get install -y ${aptTools} curl unzip; ${NUCLEI_INSTALL}`;
-    return runInstall(script, 'Tüm araçlar');
+    // Her aracın kendi install scriptini sırayla çalıştır; biri patlarsa diğerine geç.
+    const parts = TOOL_CATALOG
+      .filter((x) => x.install)
+      .map((x) => `echo '===== ${x.id} =====' && ( ${x.install} ) || echo '*** ${x.id} BAŞARISIZ ***'`);
+    return runInstall(parts.join(' ; '), 'Tüm araçlar');
   }
   const tdef = TOOL_CATALOG.find((x) => x.id === toolId);
   if (!tdef) return { ok: false, error: 'Bilinmeyen araç' };
+  if (!tdef.install) return { ok: false, error: 'Bu araç dahili (kurulum gerektirmez)' };
   return runInstall(tdef.install, tdef.name);
 });
 
