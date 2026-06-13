@@ -80,16 +80,17 @@ const REGISTRY = {
   amass: {
     name: 'Amass',
     platforms: {
-      win32: { repo: 'owasp-amass/amass', assetPattern: /amass_Windows_amd64\.zip$/i, binInZip: 'amass.exe' },
-      linux: { repo: 'owasp-amass/amass', assetPattern: /amass_Linux_amd64\.zip$/i, binInZip: 'amass' },
-      darwin: { repo: 'owasp-amass/amass', assetPattern: /amass_Darwin_(arm64|amd64)\.zip$/i, binInZip: 'amass' },
+      win32: { repo: 'owasp-amass/amass', assetPattern: /amass_windows_amd64\.(zip|tar\.gz)$/i, binInZip: 'amass.exe' },
+      linux: { repo: 'owasp-amass/amass', assetPattern: /amass_linux_amd64\.(zip|tar\.gz)$/i, binInZip: 'amass' },
+      darwin: { repo: 'owasp-amass/amass', assetPattern: /amass_darwin_(arm64|amd64)\.(zip|tar\.gz)$/i, binInZip: 'amass' },
     },
   },
   chisel: {
     name: 'Chisel',
     platforms: {
-      win32: { repo: 'jpillora/chisel', assetPattern: /chisel_.*_windows_amd64\.gz$/i, binInZip: 'chisel.exe' },
-      linux: { repo: 'jpillora/chisel', assetPattern: /chisel_.*_linux_amd64\.gz$/i, binInZip: 'chisel' },
+      win32: { repo: 'jpillora/chisel', assetPattern: /chisel_.*_windows_amd64\.(zip|gz)$/i, binInZip: 'chisel.exe' },
+      linux: { repo: 'jpillora/chisel', assetPattern: /chisel_.*_linux_amd64\.(gz|tar\.gz)$/i, binInZip: 'chisel' },
+      darwin: { repo: 'jpillora/chisel', assetPattern: /chisel_.*_darwin_(amd64|arm64)\.gz$/i, binInZip: 'chisel' },
     },
   },
 };
