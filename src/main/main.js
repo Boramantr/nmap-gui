@@ -586,7 +586,7 @@ const TOOL_CATALOG = [
 
   // EXPLOIT
   { id: 'searchsploit', name: 'SearchSploit', desc: 'ExploitDB exploit araması (salt-okunur)', cat: 'Exploit', phase: 'exploit',
-    install: 'apt-get update && apt-get install -y exploitdb' },
+    install: 'apt-get update && apt-get install -y git && (test -d /opt/exploitdb || git clone --depth 1 https://gitlab.com/exploit-database/exploitdb.git /opt/exploitdb) && ln -sf /opt/exploitdb/searchsploit /usr/local/bin/searchsploit && /usr/local/bin/searchsploit -h | head -1' },
   { id: 'sqlmap', name: 'sqlmap', desc: 'SQL injection otomasyonu (Python, Windows-doğal)', cat: 'Exploit', phase: 'exploit',
     install: 'apt-get update && apt-get install -y sqlmap' },
   { id: 'hydra', name: 'Hydra', desc: 'Kimlik denemesi (yalnızca engagement+scope)', cat: 'Exploit', phase: 'exploit',
@@ -602,7 +602,7 @@ const TOOL_CATALOG = [
   { id: 'john', name: 'John the Ripper', desc: 'Klasik şifre kırıcı', cat: 'Şifre', phase: 'post',
     install: 'apt-get update && apt-get install -y john' },
   { id: 'netexec', name: 'NetExec', desc: 'AD/SMB lateral movement (eski CME)', cat: 'AD', phase: 'post',
-    install: 'apt-get update && apt-get install -y python3-pip && pipx install netexec' },
+    install: 'apt-get update && apt-get install -y pipx python3-venv git && pipx ensurepath && pipx install --force netexec && ln -sf /root/.local/bin/netexec /usr/local/bin/netexec && /usr/local/bin/netexec --version' },
 ];
 ipcMain.handle('tools:catalog', async () => TOOL_CATALOG);
 

@@ -707,7 +707,12 @@ function App() {
       if (aws) { window.api.wsAssets(aws.id).then(setWsAssets); window.api.wsAudit(aws.id).then(setWsAudit); }
     });
     window.api.onToolsInstallOut((d) => setInstallLog((o) => o + d));
-    window.api.onToolsInstallDone(() => { setInstallingTool(null); refreshTools(); toast('Kurulum tamamlandı', 'success'); });
+    window.api.onToolsInstallDone(({ code } = {}) => {
+      setInstallingTool(null);
+      refreshTools();
+      if (code === 0) toast('Kurulum tamamlandı', 'success');
+      else toast(`Kurulum başarısız (kod ${code}) — kurulum logunu kontrol edin`, 'error');
+    });
     // genel araç konsolu
     window.api.onToolOut((d) => setToolConsole((c) => ({ ...c, output: c.output + d })));
     window.api.onToolDone(({ tool, code, count }) => {
