@@ -1711,6 +1711,29 @@ function App() {
             {toolCatalog.map((tl) => {
               const found = toolStatus.tools[tl.id];
               const isPortable = toolStatus.portable && toolStatus.portable[tl.id];
+              const portableSupported = portableStatus[tl.id] && portableStatus[tl.id].supported;
+              const prog = portableProg[tl.id];
+              const portableInstalling = prog && prog.phase !== 'done' && (prog.pct || 0) < 100 && !(portableStatus[tl.id] && portableStatus[tl.id].installed);
+              const wslInstalling = installingTool === tl.id;
+              const busy = portableInstalling || wslInstalling;
+
+              // Akıllı kur: portable destekleniyorsa portable, yoksa WSL hazırsa WSL,
+              // hiçbiri yoksa WSL kurulumunu başlat.
+              const smartInstall = () => {
+                if (busy) return;
+                if (portableSupported) return installPortable(tl.id);
+                if (toolStatus.wsl) return installTool(tl.id);
+                toast('Bu araç WSL gerektirir. Önce yukarıdan WSL kurulumunu başlatın.', 'warn');
+                installWsl();
+              };
+              const label = (() => {
+                if (portableInstalling) return `⬇ %${prog.pct || 0}`;
+                if (wslInstalling) return 'Kuruluyor...';
+                if (portableSupported) return '⬇ Portable kur';
+                if (toolStatus.wsl) return '⬇ WSL\'e kur';
+                return '⬇ Kur (WSL gerekir)';
+              })();
+
               return (
                 <div key={tl.id} className="tool-card">
                   <div className="tc-head"><b>{tl.name}</b><span className="tc-cat">{tl.cat}</span></div>
@@ -1718,14 +1741,13 @@ function App() {
                   <span className={'tc-status ' + (found ? 'ok' : 'no')}>
                     {found ? (isPortable ? '✓ portable kurulu' : '✓ WSL\'de kurulu') : '✕ kurulu değil'}
                   </span>
-                  {!found && toolStatus.wsl && (
-                    <button className="tc-install" disabled={installingTool === tl.id}
-                      onClick={() => installTool(tl.id)}>
-                      {installingTool === tl.id ? 'Kuruluyor...' : '⬇ WSL\'e kur'}</button>
-                  )}
                   {!found && (
-                    <button className="copy-cmd" onClick={() => { navigator.clipboard.writeText(tl.install); toast('Kurulum komutu kopyalandı', 'success'); }}>
-                      ⧉ komutu kopyala</button>
+                    <button className="tc-install" disabled={busy} onClick={smartInstall}>{label}</button>
+                  )}
+                  {portableInstalling && (
+                    <div className="pc-bar" style={{ marginTop: 6 }}>
+                      <div className="pc-bar-fill" style={{ width: (prog.pct || 0) + '%' }}></div>
+                    </div>
                   )}
                 </div>
               );
