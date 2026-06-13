@@ -162,6 +162,12 @@ function addNucleiFindings(ws, findings) {
   return added;
 }
 
+/* ---------- CVE severity güncelle (NVD zenginleştirme) ---------- */
+function setVulnSeverity(ws, cve, severity) {
+  run('UPDATE vulns SET severity = ? WHERE ws = ? AND cve = ?', [severity, ws, cve]);
+  save();
+}
+
 /* ---------- Audit log ---------- */
 function addAudit(ws, action, detail) {
   run('INSERT INTO audit (ws, date, action, detail) VALUES (?,?,?,?)',
@@ -184,5 +190,5 @@ function deleteEvidence(id) { run('DELETE FROM evidence WHERE id = ?', [id]); sa
 module.exports = {
   initDb, createWorkspace, listWorkspaces, getActiveWorkspace, setActiveWorkspace,
   updateWorkspace, deleteWorkspace, persistScan, workspaceAssets, addAudit, listAudit,
-  addNucleiFindings, addEvidence, listEvidence, deleteEvidence,
+  addNucleiFindings, addEvidence, listEvidence, deleteEvidence, setVulnSeverity,
 };

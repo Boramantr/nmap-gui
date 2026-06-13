@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  platform: process.platform,
   // nmap
   checkNmap: () => ipcRenderer.invoke('nmap:check'),
   openDownload: () => ipcRenderer.invoke('nmap:openDownload'),
@@ -47,6 +48,14 @@ contextBridge.exposeInMainWorld('api', {
   toolsCatalog: () => ipcRenderer.invoke('tools:catalog'),
   toolsCheck: () => ipcRenderer.invoke('tools:check'),
   toolsInstall: (id) => ipcRenderer.invoke('tools:install', id),
+  // portable (WSL'siz native binary'ler)
+  portableStatus: () => ipcRenderer.invoke('portable:status'),
+  portableInstall: (id) => ipcRenderer.invoke('portable:install', id),
+  portableInstallAll: () => ipcRenderer.invoke('portable:installAll'),
+  portableUninstall: (id) => ipcRenderer.invoke('portable:uninstall', id),
+  onPortableProgress: (cb) => ipcRenderer.on('portable:progress', (_e, d) => cb(d)),
+  onPortableDone: (cb) => ipcRenderer.on('portable:done', (_e, d) => cb(d)),
+  onPortableAllDone: (cb) => ipcRenderer.on('portable:allDone', (_e, d) => cb(d)),
   // nuclei
   nucleiRun: (opts) => ipcRenderer.invoke('nuclei:run', opts),
   nucleiStop: () => ipcRenderer.invoke('nuclei:stop'),
@@ -58,6 +67,9 @@ contextBridge.exposeInMainWorld('api', {
   reportPro: (wsId) => ipcRenderer.invoke('report:professional', wsId),
   // exploit / saldırgan
   exploitSearch: (term) => ipcRenderer.invoke('exploit:search', term),
+  exploitAuto: (terms) => ipcRenderer.invoke('exploit:auto', terms),
+  // CVE zenginleştirme (NVD)
+  enrichCve: (ids) => ipcRenderer.invoke('cve:enrich', ids),
   hydraRun: (opts) => ipcRenderer.invoke('attack:hydra', opts),
   hydraStop: () => ipcRenderer.invoke('attack:hydraStop'),
   // metasploit

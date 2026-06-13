@@ -40,6 +40,15 @@ npm run dist
 - **Otomatik izleme** (periyodik tarama + yeni cihaz bildirimi)
 - **Loglama** (userData/nmapgui.log), nmap otomatik kur, özel ikon, etik onay, offline
 
+## Özellikler (v3)
+- **Portable pentest araçları (WSL'siz)** — nuclei, gobuster, httpx, subfinder gibi Go ile yazılmış araçların resmi Windows binary'lerini GitHub release'lerden indirip uygulamanın veri klasörüne kurar. WSL kurulumu, yeniden başlatma veya UAC gerektirmez. Portable kuruluysa otomatik olarak WSL'e tercih edilir.
+- **NVD CVSS zenginleştirme** — tespit edilen CVE'ler için NVD API'den gerçek CVSS skoru, severity ve açıklama (yerel önbellekli, rate-limit dostu)
+- **Oto-exploit eşleme** — açık servis sürümlerini (örn. `vsftpd 2.3.4`) searchsploit/ExploitDB ile otomatik eşler
+- **Önerilen sonraki adımlar** — tarama sonucuna göre önceliklendirilmiş, tek tıkla çalıştırılabilir aksiyon listesi (nuclei, web enum, SMB enum, exploit arama)
+- **Komut bayrak açıklayıcı** — çalışacak her nmap bayrağının sade Türkçe açıklaması
+- **Gelişmiş tarama diff'i** — host/port farkına ek olarak servis sürüm değişikliklerini de gösterir
+- **Çoklu-OS desteği** — yönetici/ARP/araç çalıştırma Windows (WSL), Linux ve macOS'ta çalışır
+
 ## Yol haritası (sonraki adımlar)
 - [ ] Tarama geçmişi
 - [ ] Renderer'ı Vite + gerçek React bundle'a taşımak

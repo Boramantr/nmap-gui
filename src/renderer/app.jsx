@@ -199,6 +199,97 @@ function toolsForHost(host) {
   return Object.values(set);
 }
 
+// nmap bayraklarının sade Türkçe açıklaması (komut şeffaflığı için).
+const FLAG_DOC = {
+  '-sn': 'Yalnızca host keşfi (port taraması yok)',
+  '-sS': 'SYN (yarı-açık) TCP taraması — hızlı ve gizli',
+  '-sT': 'Tam TCP connect taraması',
+  '-sU': 'UDP port taraması',
+  '-sV': 'Servis sürüm tespiti',
+  '-sC': 'Varsayılan NSE script seti',
+  '-O': 'İşletim sistemi tespiti',
+  '-A': 'Agresif: OS + sürüm + script + traceroute',
+  '-Pn': 'Ping atlamadan tara (host up varsay)',
+  '-F': 'Hızlı tarama (en yaygın 100 port)',
+  '-p-': 'Tüm 65535 portu tara',
+  '-p': 'Belirli port aralığı',
+  '-v': 'Ayrıntılı çıktı',
+  '-f': 'Paket parçalama (IDS atlatma)',
+  '--top-ports': 'En yaygın N portu tara',
+  '--script': 'Belirtilen NSE scriptlerini çalıştır',
+  '-PR': 'ARP ile host keşfi (yerel ağ)',
+  '-PE': 'ICMP echo ping', '-PP': 'ICMP timestamp ping', '-PM': 'ICMP netmask ping',
+  '-PS': 'TCP SYN ping', '-PA': 'TCP ACK ping', '-PU': 'UDP ping',
+  '-T0': 'Çok yavaş (paranoyak)', '-T1': 'Yavaş (sinsi)', '-T2': 'Kibar',
+  '-T3': 'Normal', '-T4': 'Hızlı (önerilen)', '-T5': 'Çok hızlı (agresif)',
+};
+function explainArgs(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith('-')) continue;
+    const tFlag = a.match(/^-T[0-5]$/) ? a : null;
+    if (tFlag && FLAG_DOC[tFlag]) { out.push({ flag: a, desc: FLAG_DOC[tFlag] }); continue; }
+    if (FLAG_DOC[a]) {
+      // Argüman alan bayraklar için değeri de göster
+      const takesVal = ['-p', '--script', '--top-ports'].includes(a);
+      const val = takesVal && args[i + 1] && !args[i + 1].startsWith('-') ? ' ' + args[i + 1] : '';
+      out.push({ flag: a + val, desc: FLAG_DOC[a] });
+    }
+  }
+  return out;
+}
+
+const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0, unknown: -1 };
+const SEV_COLOR = { critical: '#b91c1c', high: '#ef4444', medium: '#f59e0b', low: '#3b82f6', info: '#888', unknown: 'var(--muted)' };
+function CvssBadge({ info }) {
+  if (!info) return null;
+  const sev = info.severity || 'unknown';
+  const color = SEV_COLOR[sev] || 'var(--muted)';
+  const label = info.cvss != null ? `${info.cvss} ${sev}` : sev;
+  return <span className="cvss-badge" style={{ background: color + '22', color, borderColor: color + '55' }}
+    title={info.desc || ''}>{label}</span>;
+}
+
+// Tarama sonucundan önceliklendirilmiş "sonraki adım" önerileri üret.
+function buildNextSteps(upHosts) {
+  const steps = [];
+  const seen = new Set();
+  const add = (s) => { if (!seen.has(s.key)) { seen.add(s.key); steps.push(s); } };
+  upHosts.forEach((h) => {
+    const open = (h.ports || []).filter((p) => p.state === 'open');
+    // 1) Zafiyetli host -> en yüksek öncelik
+    if ((h.vulns || []).length) {
+      add({ key: 'nuclei-' + h.ip, prio: 0, icon: '🛡️', title: `${h.ip} — Nuclei zafiyet taraması`,
+        detail: `${h.vulns.length} CVE işareti var; şablon taramasıyla doğrula.`, action: { type: 'nuclei', ip: h.ip } });
+    }
+    open.forEach((p) => {
+      const port = p.port;
+      // 2) Servis sürümü biliniyorsa exploit ara
+      if (p.version && /\d/.test(p.version)) {
+        add({ key: 'exp-' + p.version, prio: 1, icon: '🔎', title: `Exploit ara: ${p.version}`,
+          detail: `${h.ip}:${port} üzerinde tespit edildi.`, action: { type: 'exploit', term: p.version } });
+      }
+      // 3) Web servisleri
+      if (['80', '443', '8080', '8443'].includes(port)) {
+        add({ key: 'web-' + h.ip, prio: 2, icon: '🌐', title: `${h.ip} — Web enumerasyonu`,
+          detail: `Port ${port} açık; WhatWeb + dizin keşfi (gobuster) önerilir.`, action: { type: 'tool', tool: 'whatweb', ip: h.ip } });
+      }
+      // 4) SMB
+      if (['139', '445'].includes(port)) {
+        add({ key: 'smb-' + h.ip, prio: 1, icon: '🗄️', title: `${h.ip} — SMB enumerasyonu`,
+          detail: `Port ${port} açık; enum4linux + MS17-010 kontrolü.`, action: { type: 'tool', tool: 'enum4linux', ip: h.ip } });
+      }
+      // 5) Sürüm yoksa derin tara
+      if (!p.version && !['80', '443', '8080', '8443', '139', '445'].includes(port)) {
+        add({ key: 'deep-' + h.ip, prio: 3, icon: '🔬', title: `${h.ip} — Servis sürüm tespiti`,
+          detail: `Açık portlar var ama sürüm bilinmiyor; -sV ile derin tara.`, action: { type: 'scan', ip: h.ip } });
+      }
+    });
+  });
+  return steps.sort((a, b) => a.prio - b.prio).slice(0, 8);
+}
+
 function ProfileIcon({ name }) {
   const c = 'currentColor';
   if (name === 'radar') return (
@@ -362,10 +453,12 @@ function Topology({ hosts, gateway, onSelect }) {
 }
 
 /* ============ Cihaz detay paneli ============ */
-function DeviceDetail({ host, t, onClose, onScan, onNuclei, onTool, onExploit, onShodan, onEvidence, onShot, note, onNote }) {
+function DeviceDetail({ host, t, onClose, onScan, onNuclei, onTool, onExploit, onShodan, onEvidence, onShot, note, onNote,
+  cveInfo, autoExploit, onAutoExploit, autoExpBusy, onEnrich, cveBusy }) {
   if (!host) return null;
   const risk = riskOf(host);
   const enumTools = toolsForHost(host);
+  const versions = [...new Set((host.ports || []).filter((p) => p.state === 'open' && p.version && /\d/.test(p.version)).map((p) => p.version))];
   return (
     <div className="detail-panel">
       <div className="detail-head">
@@ -383,11 +476,28 @@ function DeviceDetail({ host, t, onClose, onScan, onNuclei, onTool, onExploit, o
             ))}
           </div>
         )}
+        {versions.length > 0 && (
+          <button className="autoexp-btn" disabled={autoExpBusy} onClick={() => onAutoExploit(host)}>
+            {autoExpBusy ? '⏳ ExploitDB...' : '🧨 Servis sürümlerini exploit\'e eşle'}</button>
+        )}
         <div className="dd-actions">
           <button className="dd-act" onClick={() => onShodan(host.ip)}>🛰️ Shodan</button>
           <button className="dd-act" onClick={() => onEvidence(host.ip)}>📁 Kanıt</button>
           <button className="dd-act" onClick={() => onShot(host.ip)}>📸 Ekran</button>
         </div>
+        {versions.some((v) => autoExploit[v]) && (
+          <div className="autoexp-res">
+            {versions.filter((v) => autoExploit[v]).map((v, i) => (
+              <div key={i} className="ae-group">
+                <div className="ae-ver">{v} <span className="muted">— {autoExploit[v].length} eşleşme</span></div>
+                {autoExploit[v].slice(0, 6).map((ex, j) => (
+                  <div key={j} className="ae-item" title={ex.path}>💣 {ex.title}{ex.edb ? ` (EDB-${ex.edb})` : ''}</div>
+                ))}
+                {autoExploit[v].length === 0 && <div className="ae-item muted">Eşleşme yok</div>}
+              </div>
+            ))}
+          </div>
+        )}
         <h4>📝 Not</h4>
         <textarea className="note-area" placeholder="Bu cihaz hakkında not..." value={note || ''}
           onChange={(e) => onNote(host.ip, e.target.value)} />
@@ -411,9 +521,11 @@ function DeviceDetail({ host, t, onClose, onScan, onNuclei, onTool, onExploit, o
         )}
         {host.vulns.length > 0 && (
           <>
-            <h4 style={{ color: 'var(--red)' }}>{t.vulns} ({host.vulns.length})</h4>
-            <ul className="vuln-list">{host.vulns.map((v, i) =>
-              <li key={i}><a href="#" onClick={(e) => { e.preventDefault(); window.open('https://nvd.nist.gov/vuln/detail/' + v.cve); }}>{v.cve}</a> (port {v.port})</li>)}</ul>
+            <h4 style={{ color: 'var(--red)' }}>{t.vulns} ({host.vulns.length})
+              <button className="enrich-btn sm" disabled={cveBusy}
+                onClick={() => onEnrich(host.vulns.map((v) => v.cve))}>{cveBusy ? '⏳' : '🔬 CVSS'}</button></h4>
+            <ul className="vuln-list">{[...host.vulns].sort((a, b) => ((cveInfo[b.cve] && cveInfo[b.cve].cvss) || 0) - ((cveInfo[a.cve] && cveInfo[a.cve].cvss) || 0)).map((v, i) =>
+              <li key={i}><a href="#" onClick={(e) => { e.preventDefault(); window.open('https://nvd.nist.gov/vuln/detail/' + v.cve); }}>{v.cve}</a> (port {v.port})<CvssBadge info={cveInfo[v.cve]} /></li>)}</ul>
           </>
         )}
         {(() => {
@@ -503,6 +615,13 @@ function App() {
   const [evidence, setEvidence] = useState([]);
   const [diffPick, setDiffPick] = useState([]);
   const [diffResult, setDiffResult] = useState(null);
+  const [portableStatus, setPortableStatus] = useState({}); // id -> {supported, installed, path}
+  const [portableProg, setPortableProg] = useState({}); // id -> {phase, pct, msg}
+  const [portableBusy, setPortableBusy] = useState(false);
+  const [cveInfo, setCveInfo] = useState({});       // CVE -> { cvss, severity, desc }
+  const [cveBusy, setCveBusy] = useState(false);
+  const [autoExploit, setAutoExploit] = useState({}); // sürüm/term -> [{title, edb, path}]
+  const [autoExpBusy, setAutoExpBusy] = useState(false);
   const [avatarMenu, setAvatarMenu] = useState(false);
   const outputRef = useRef(null);
   const toolConsoleRef = useRef(null);
@@ -512,6 +631,7 @@ function App() {
   const targetRef = useRef('');
 
   const t = I18N[settings.lang];
+  const isWin = window.api.platform === 'win32';
 
   /* toast */
   const toast = (msg, type = 'info') => {
@@ -540,6 +660,14 @@ function App() {
     window.api.wslCheck().then((r) => setWsl({ checked: true, installed: r.installed, distros: r.distros }));
     window.api.toolsCatalog().then(setToolCatalog);
     refreshTools();
+    refreshPortable();
+    window.api.onPortableProgress((p) => setPortableProg((m) => ({ ...m, [p.id]: p })));
+    window.api.onPortableDone((d) => {
+      setPortableProg((m) => ({ ...m, [d.id]: { phase: 'done', pct: 100, msg: d.ok ? 'Kuruldu' : ('Hata: ' + d.error) } }));
+      refreshPortable(); refreshTools();
+      toast(d.ok ? `✓ ${d.id} portable kuruldu` : `${d.id} hata: ${d.error}`, d.ok ? 'success' : 'error');
+    });
+    window.api.onPortableAllDone(() => { setPortableBusy(false); toast('Tüm portable kurulumlar bitti', 'success'); });
     // nuclei + kurulum olayları
     window.api.onNucleiFinding((f) => setNucleiFindings((arr) => [...arr, f]));
     window.api.onNucleiDone(({ count }) => {
@@ -661,6 +789,10 @@ function App() {
     const [oldR, newR] = (r1.date < r2.date) ? [r1, r2] : [r2, r1];
     const portSet = (rec) => { const s = new Set(); (rec.parsed.hosts || []).forEach((h) => (h.ports || []).forEach((p) => s.add(`${h.ip}:${p.port}/${p.proto}`))); return s; };
     const hostSet = (rec) => new Set((rec.parsed.hosts || []).filter((h) => h.status === 'up').map((h) => h.ip));
+    // Servis sürüm haritası: "ip:port/proto" -> version
+    const verMap = (rec) => { const m = {}; (rec.parsed.hosts || []).forEach((h) => (h.ports || []).forEach((p) => { if (p.version) m[`${h.ip}:${p.port}/${p.proto}`] = p.version; })); return m; };
+    const ov = verMap(oldR), nv = verMap(newR);
+    const verChanges = Object.keys(nv).filter((k) => ov[k] && ov[k] !== nv[k]).map((k) => ({ key: k, from: ov[k], to: nv[k] }));
     const oh = hostSet(oldR), nh = hostSet(newR), op = portSet(oldR), np = portSet(newR);
     setDiffResult({
       oldDate: oldR.date, newDate: newR.date,
@@ -668,10 +800,69 @@ function App() {
       goneHosts: [...oh].filter((x) => !nh.has(x)),
       newPorts: [...np].filter((x) => !op.has(x)),
       gonePorts: [...op].filter((x) => !np.has(x)),
+      verChanges,
     });
   };
 
+  // NVD ile CVE zenginleştirme (CVSS + severity + açıklama)
+  const enrichCves = async (ids) => {
+    const list = [...new Set((ids || []).filter(Boolean))];
+    if (!list.length) { toast('Zenginleştirilecek CVE yok', 'warn'); return; }
+    setCveBusy(true);
+    toast(`${list.length} CVE NVD'den sorgulanıyor...`, 'info');
+    const r = await window.api.enrichCve(list);
+    setCveBusy(false);
+    if (r.ok) {
+      setCveInfo((m) => ({ ...m, ...r.info }));
+      const aws = activeWsRef.current;
+      if (aws) window.api.wsAssets(aws.id).then(setWsAssets);
+      toast('CVE bilgileri güncellendi (CVSS)', 'success');
+    } else toast('NVD hatası: ' + r.error, 'error');
+  };
+
+  // Servis sürümlerini searchsploit ile otomatik exploit'e eşle
+  const autoMatchExploits = async (host) => {
+    if (!toolStatus.tools.searchsploit) { toast('searchsploit kurulu değil — Araçlar sekmesinden kurun', 'error'); setView('tools'); return; }
+    const terms = [...new Set((host.ports || [])
+      .filter((p) => p.state === 'open' && p.version && /\d/.test(p.version))
+      .map((p) => p.version))];
+    if (!terms.length) { toast('Eşlenecek servis sürümü yok (önce -sV ile tara)', 'warn'); return; }
+    setAutoExpBusy(true);
+    toast(`${terms.length} servis sürümü ExploitDB'de aranıyor...`, 'info');
+    const r = await window.api.exploitAuto(terms);
+    setAutoExpBusy(false);
+    if (r.ok) {
+      setAutoExploit((m) => ({ ...m, ...r.results }));
+      const total = Object.values(r.results).reduce((a, l) => a + l.length, 0);
+      toast(`${total} olası exploit eşleşti`, total > 0 ? 'warn' : 'success');
+    } else toast('Hata: ' + r.error, 'error');
+  };
+
+  // Sonraki adım önerisini çalıştır
+  const runNextStep = (action) => {
+    if (action.type === 'nuclei') { setNucleiTarget(action.ip); setView('tools'); runNuclei(action.ip); }
+    else if (action.type === 'tool') { runTool(action.tool, action.ip); }
+    else if (action.type === 'exploit') { searchExploit(action.term); }
+    else if (action.type === 'scan') { scanDevice(action.ip); }
+  };
+
   const refreshTools = async () => { try { setToolStatus(await window.api.toolsCheck()); } catch (e) {} };
+  const refreshPortable = async () => { try { setPortableStatus(await window.api.portableStatus()); } catch (e) {} };
+  const installPortable = async (id) => {
+    setPortableProg((m) => ({ ...m, [id]: { phase: 'start', pct: 0, msg: 'Başlatılıyor...' } }));
+    const r = await window.api.portableInstall(id);
+    if (!r.ok) toast(`${id} kurulumu başlatılamadı: ` + r.error, 'error');
+  };
+  const installAllPortable = async () => {
+    setPortableBusy(true);
+    toast('Tüm portable araçlar indiriliyor (paralel değil, sırayla)...', 'info');
+    await window.api.portableInstallAll();
+  };
+  const uninstallPortable = async (id) => {
+    await window.api.portableUninstall(id);
+    refreshPortable(); refreshTools();
+    toast(`${id} portable kaldırıldı`, 'info');
+  };
   const installTool = async (id) => {
     setInstallingTool(id); setInstallLog('');
     const r = await window.api.toolsInstall(id);
@@ -963,7 +1154,7 @@ function App() {
             <span className="hp-dot"></span>
             <div className="hp-txt"><div className="hp-l1">Veritabanı</div><div className="hp-l2">Güncel</div></div>
           </div>
-          {wsl.checked && <span className={'mini-badge ' + (wsl.installed ? 'ok' : 'bad')} title="WSL2">WSL {wsl.installed ? '✓' : '✕'}</span>}
+          {isWin && wsl.checked && <span className={'mini-badge ' + (wsl.installed ? 'ok' : 'bad')} title="WSL2">WSL {wsl.installed ? '✓' : '✕'}</span>}
           {!admin && <span className="mini-badge warn" title={t.adminWarn}>admin?</span>}
           <div className="avatar-wrap">
             <button className={'avatar-box' + (avatarMenu ? ' open' : '')} onClick={() => setAvatarMenu((v) => !v)}>
@@ -1082,6 +1273,14 @@ function App() {
                     <button className="copy-btn" onClick={handleCopyCmd} title="Panoya kopyala">⧉</button></div>
                   {commandText}
                 </div>
+                {explainArgs(baseArgs).length > 0 && (
+                  <div className="flag-doc">
+                    <div className="fd-title">🧩 Bayraklar ne yapıyor?</div>
+                    {explainArgs(baseArgs).map((f, i) => (
+                      <div key={i} className="fd-row"><code>{f.flag}</code><span>{f.desc}</span></div>
+                    ))}
+                  </div>
+                )}
               </div>
             </details>
 
@@ -1146,7 +1345,12 @@ function App() {
                         </div>
                         {(allCves.length > 0 || interesting.length > 0) && (
                           <div className="findings">
-                            <div className="f-title">🎯 Pentest Bulguları</div>
+                            <div className="f-title">🎯 Pentest Bulguları
+                              {allCves.length > 0 && (
+                                <button className="enrich-btn" disabled={cveBusy}
+                                  onClick={() => enrichCves(allCves.map((c) => c.cve))}>
+                                  {cveBusy ? '⏳ NVD...' : '🔬 NVD ile CVSS getir'}</button>
+                              )}</div>
                             <div className="f-grid">
                               <div className="f-stat"><b>{upHosts.length}</b><span>canlı host</span></div>
                               <div className="f-stat"><b>{allPorts.length}</b><span>açık port</span></div>
@@ -1155,9 +1359,10 @@ function App() {
                             </div>
                             {allCves.length > 0 && (
                               <div className="f-cves">
-                                {allCves.slice(0, 12).map((c, i) => (
+                                {[...allCves].sort((a, b) => ((cveInfo[b.cve] && cveInfo[b.cve].cvss) || 0) - ((cveInfo[a.cve] && cveInfo[a.cve].cvss) || 0))
+                                  .slice(0, 12).map((c, i) => (
                                   <a key={i} href="#" onClick={(e) => { e.preventDefault(); window.open('https://nvd.nist.gov/vuln/detail/' + c.cve); }}>
-                                    {c.cve} <span>({c.host}:{c.port})</span></a>
+                                    {c.cve} <span>({c.host}:{c.port})</span><CvssBadge info={cveInfo[c.cve]} /></a>
                                 ))}
                                 {allCves.length > 12 && <span className="more">+{allCves.length - 12} daha</span>}
                               </div>
@@ -1167,6 +1372,27 @@ function App() {
                             )}
                           </div>
                         )}
+                        {(() => {
+                          const steps = buildNextSteps(upHosts);
+                          if (!steps.length) return null;
+                          return (
+                            <div className="next-steps">
+                              <div className="ns-title">🧭 Önerilen Sonraki Adımlar</div>
+                              <div className="ns-list">
+                                {steps.map((s, i) => (
+                                  <div key={i} className="ns-card">
+                                    <div className="ns-ic">{s.icon}</div>
+                                    <div className="ns-body">
+                                      <div className="ns-head">{s.title}</div>
+                                      <div className="ns-detail">{s.detail}</div>
+                                    </div>
+                                    <button className="ns-run" onClick={() => runNextStep(s.action)}>▶ Çalıştır</button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
                         <div className="section-head">
                           <h3 className="section-title">📡 {t.devices} ({viewHosts.length}/{upHosts.length})</h3>
                           <input className="filter-input" placeholder="🔎 Filtrele (IP, MAC, üretici, not...)"
@@ -1233,7 +1459,9 @@ function App() {
                 onExploit={(term) => searchExploit(term)}
                 onShodan={(ip) => runShodan(ip)}
                 onEvidence={(ip) => addEvidence(ip)} onShot={(ip) => shotEvidence(ip)}
-                note={notes[selHost.ip]} onNote={saveNote} />}
+                note={notes[selHost.ip]} onNote={saveNote}
+                cveInfo={cveInfo} autoExploit={autoExploit} onAutoExploit={autoMatchExploits}
+                autoExpBusy={autoExpBusy} onEnrich={enrichCves} cveBusy={cveBusy} />}
             </div>
           </div>
         </div>
@@ -1403,11 +1631,61 @@ function App() {
       {view === 'tools' && (
         <div className="page">
           <h2>🧰 {t.tools}</h2>
+
+          {/* ---------- Portable araçlar (WSL'siz) ---------- */}
+          <div className="portable-hero">
+            <div className="ph-left">
+              <div className="ph-title">⚡ Portable Araçlar <span className="ph-badge">WSL gerekmez</span></div>
+              <div className="ph-desc">Go ile yazılmış pentest araçlarının resmi Windows binary'lerini GitHub release'lerden indirip
+                uygulamanın veri klasörüne kurar. Yeniden başlatma, UAC veya WSL kurulumu yok.</div>
+            </div>
+            <button className="primary" disabled={portableBusy} onClick={installAllPortable}>
+              {portableBusy ? '⏳ Sırayla indiriliyor...' : '⬇ Tüm portable araçları kur'}</button>
+          </div>
+          <div className="portable-grid">
+            {Object.entries(portableStatus).filter(([, s]) => s.supported).map(([id, s]) => {
+              const prog = portableProg[id];
+              const installing = prog && prog.phase !== 'done' && prog.phase !== undefined && !s.installed && prog.pct < 100;
+              return (
+                <div key={id} className={'portable-card' + (s.installed ? ' installed' : '')}>
+                  <div className="pc-head">
+                    <b>{id}</b>
+                    {s.installed
+                      ? <span className="pc-state ok">✓ portable kurulu</span>
+                      : <span className="pc-state no">○ kurulu değil</span>}
+                  </div>
+                  {s.installed && <div className="pc-path mono small" title={s.path}>{s.path}</div>}
+                  {installing && (
+                    <div className="pc-prog">
+                      <div className="pc-bar"><div className="pc-bar-fill" style={{ width: (prog.pct || 0) + '%' }}></div></div>
+                      <div className="pc-msg small muted">{prog.msg}</div>
+                    </div>
+                  )}
+                  <div className="pc-actions">
+                    {!s.installed && (
+                      <button className="primary" disabled={installing || portableBusy} onClick={() => installPortable(id)}>
+                        {installing ? `⬇ %${prog.pct || 0}` : '⬇ Portable kur'}</button>
+                    )}
+                    {s.installed && (
+                      <>
+                        <button className="export" onClick={() => installPortable(id)}>↻ Güncelle</button>
+                        <button className="export" onClick={() => uninstallPortable(id)}>🗑 Kaldır</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="muted small">İpucu: Portable kurulu araçlar her tür komutta öncelikli olarak çalışır;
+            WSL kurulu olsa bile portable binary tercih edilir (daha hızlı, ek bağımlılık yok).</p>
+
+          <h3 className="section-title">🐧 WSL Tabanlı Araçlar (gelişmiş)</h3>
           <div className="wsl-status">
             {toolStatus.wsl
-              ? <span className="badge ok">● WSL hazır</span>
+              ? <span className="badge ok">● {isWin ? 'WSL hazır' : 'Yerel kabuk hazır'}</span>
               : <span className="badge bad">● WSL yok — pentest araçları için gerekli</span>}
-            {!toolStatus.wsl && (
+            {isWin && !toolStatus.wsl && (
               <>
                 <button className="primary" style={{ width: 'auto', margin: 0 }} onClick={installWsl}>⬇ WSL'i otomatik kur (root)</button>
                 <button className="export" onClick={prepareRoot}>⚙️ Distroyu hazırla</button>
@@ -1432,11 +1710,14 @@ function App() {
             </div>
             {toolCatalog.map((tl) => {
               const found = toolStatus.tools[tl.id];
+              const isPortable = toolStatus.portable && toolStatus.portable[tl.id];
               return (
                 <div key={tl.id} className="tool-card">
                   <div className="tc-head"><b>{tl.name}</b><span className="tc-cat">{tl.cat}</span></div>
                   <div className="tc-desc">{tl.desc}</div>
-                  <span className={'tc-status ' + (found ? 'ok' : 'no')}>{found ? '✓ kurulu' : '✕ kurulu değil'}</span>
+                  <span className={'tc-status ' + (found ? 'ok' : 'no')}>
+                    {found ? (isPortable ? '✓ portable kurulu' : '✓ WSL\'de kurulu') : '✕ kurulu değil'}
+                  </span>
                   {!found && toolStatus.wsl && (
                     <button className="tc-install" disabled={installingTool === tl.id}
                       onClick={() => installTool(tl.id)}>
@@ -1606,6 +1887,15 @@ function App() {
                 <div className="diff-col added"><b>+ Yeni açık port ({diffResult.newPorts.length})</b>{diffResult.newPorts.map((x, i) => <div key={i}>{x}</div>)}</div>
                 <div className="diff-col removed"><b>− Kapanan port ({diffResult.gonePorts.length})</b>{diffResult.gonePorts.map((x, i) => <div key={i}>{x}</div>)}</div>
               </div>
+              {diffResult.verChanges && diffResult.verChanges.length > 0 && (
+                <div className="diff-vers">
+                  <b>🔧 Sürüm değişiklikleri ({diffResult.verChanges.length})</b>
+                  {diffResult.verChanges.map((v, i) => (
+                    <div key={i} className="diff-ver-row"><span className="mono">{v.key}</span>
+                      <span className="muted">{v.from}</span> → <b>{v.to}</b></div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {history.length === 0 ? <p className="muted">{t.noHistory}</p> : (

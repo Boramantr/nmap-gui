@@ -729,3 +729,67 @@ header button, header select, header input, header .nav-ic, .ws-box, .avatar-wra
   cursor: pointer; font-size: 13px; border-radius: 7px; display: flex; align-items: center; justify-content: center; }
 .wc-btn:hover { background: var(--panel-2); color: var(--text); }
 .wc-close:hover { background: #e23b3b; color: #fff; }
+
+/* ===== Yeni özellikler (v3): CVSS, oto-exploit, sonraki adımlar, bayrak açıklama ===== */
+.cvss-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 8px;
+  font-size: 10.5px; font-weight: 700; border: 1px solid; vertical-align: middle; text-transform: uppercase; }
+.enrich-btn { margin-left: 10px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 11px; font-weight: 600; }
+.enrich-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.enrich-btn:disabled { opacity: .55; cursor: default; }
+.enrich-btn.sm { padding: 1px 7px; font-size: 10px; }
+
+.flag-doc { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--panel-2); }
+.fd-title { font-size: 11px; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.fd-row { display: flex; gap: 8px; font-size: 11.5px; padding: 2px 0; }
+.fd-row code { color: var(--accent); font-weight: 700; min-width: 92px; flex: 0 0 auto; }
+.fd-row span { color: var(--text); opacity: .85; }
+
+.next-steps { margin: 14px 0; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--panel); }
+.ns-title { font-size: 13px; font-weight: 800; margin-bottom: 10px; }
+.ns-list { display: flex; flex-direction: column; gap: 8px; }
+.ns-card { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--panel-2); }
+.ns-ic { font-size: 20px; flex: 0 0 auto; }
+.ns-body { flex: 1; min-width: 0; }
+.ns-head { font-weight: 700; font-size: 12.5px; }
+.ns-detail { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.ns-run { flex: 0 0 auto; padding: 6px 14px; border: none; border-radius: 8px; background: var(--accent);
+  color: #fff; cursor: pointer; font-weight: 700; font-size: 11.5px; }
+.ns-run:hover { filter: brightness(1.1); }
+
+.autoexp-btn { width: 100%; margin: 8px 0; padding: 9px; border: 1px solid var(--red); border-radius: 9px;
+  background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); cursor: pointer; font-weight: 700; font-size: 12px; }
+.autoexp-btn:disabled { opacity: .6; cursor: default; }
+.autoexp-res { margin-top: 8px; }
+.ae-group { margin-bottom: 8px; }
+.ae-ver { font-size: 11.5px; font-weight: 700; margin-bottom: 3px; }
+.ae-item { font-size: 11px; color: var(--text); opacity: .9; padding: 2px 0 2px 6px; border-left: 2px solid var(--red); margin: 2px 0; }
+
+.diff-vers { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.diff-ver-row { font-size: 11.5px; padding: 3px 0; display: flex; gap: 8px; align-items: center; }
+
+/* ===== Portable araç bölümü ===== */
+.portable-hero { display: flex; align-items: center; gap: 18px; padding: 16px 18px; margin: 8px 0 16px;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), var(--panel-2)); }
+.ph-left { flex: 1; min-width: 0; }
+.ph-title { font-size: 15px; font-weight: 800; margin-bottom: 4px; }
+.ph-badge { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 10px;
+  font-size: 10.5px; font-weight: 700; background: var(--green); color: #fff; vertical-align: middle; }
+.ph-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.portable-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.portable-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--panel-2); display: flex; flex-direction: column; gap: 8px; }
+.portable-card.installed { border-color: var(--green); }
+.pc-head { display: flex; justify-content: space-between; align-items: center; }
+.pc-head b { font-size: 13px; }
+.pc-state.ok { color: var(--green); font-size: 11px; font-weight: 700; }
+.pc-state.no { color: var(--muted); font-size: 11px; font-weight: 600; }
+.pc-path { opacity: .7; word-break: break-all; }
+.pc-prog { display: flex; flex-direction: column; gap: 4px; }
+.pc-bar { width: 100%; height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; }
+.pc-bar-fill { height: 100%; background: var(--accent); transition: width .25s ease; }
+.pc-msg { font-size: 10.5px; }
+.pc-actions { display: flex; gap: 6px; margin-top: auto; }
+.pc-actions button { flex: 1; }

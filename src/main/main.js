@@ -7,8 +7,41 @@ const https = require('https');
 const { spawn, execFile, exec } = require('child_process');
 const { XMLParser } = require('fast-xml-parser');
 const db = require('./db');
+const portable = require('./portable');
 
 const NMAP_INSTALLER_URL = 'https://nmap.org/dist/nmap-7.95-setup.exe';
+
+// ---------------- Platform soyutlaması (çoklu-OS) ----------------
+const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+const IS_LINUX = process.platform === 'linux';
+
+// Bir pentest aracını platforma göre çalıştırılacak {cmd, args} biçimine çevir.
+// Öncelik:  (1) portable binary kurulu mu? → direkt exe
+//           (2) Windows → WSL içinde (gerekirse root)
+//           (3) Linux/macOS → yerel binary (root gerekiyorsa sudo)
+function toolProc(tool, toolArgs, { root = false } = {}) {
+  const pbin = portable.binPath(tool);
+  if (pbin) return { cmd: pbin, args: toolArgs, kind: 'portable' };
+  if (IS_WIN) {
+    const pre = root ? ['-u', 'root', '--'] : ['--'];
+    return { cmd: 'wsl.exe', args: [...pre, tool, ...toolArgs], kind: 'wsl' };
+  }
+  if (root && process.getuid && process.getuid() !== 0) {
+    return { cmd: 'sudo', args: ['-n', tool, ...toolArgs], kind: 'sudo' };
+  }
+  return { cmd: tool, args: toolArgs, kind: 'native' };
+}
+
+// CVSS skorundan kaba severity (NVD severity boş gelirse).
+function sevFromScore(s) {
+  if (s == null) return 'unknown';
+  if (s >= 9) return 'critical';
+  if (s >= 7) return 'high';
+  if (s >= 4) return 'medium';
+  if (s > 0) return 'low';
+  return 'info';
+}
 
 let mainWindow;
 let currentScan = null;
@@ -60,6 +93,7 @@ ipcMain.handle('win:isMaximized', () => mainWindow ? mainWindow.isMaximized() : 
 
 app.whenReady().then(async () => {
   ensureDirs();
+  portable.init(dataDir());
   try { await db.initDb(dataDir()); log('Veritabanı hazır.'); }
   catch (e) { log('DB init hatası: ' + e); }
   log('Uygulama başlatıldı.');
@@ -120,11 +154,12 @@ ipcMain.handle('net:localRange', async () => {
   return { ok: false, error: 'Aktif ağ arayüzü bulunamadı.' };
 });
 
-// Windows'ta admin yetkisi kontrolü (net session sadece admin'de çalışır).
+// Yönetici/root yetkisi kontrolü (platforma göre).
 ipcMain.handle('admin:check', async () => {
   return new Promise((resolve) => {
-    if (process.platform !== 'win32') return resolve({ admin: true });
-    exec('net session', (err) => resolve({ admin: !err }));
+    if (IS_WIN) return exec('net session', { windowsHide: true }, (err) => resolve({ admin: !err }));
+    // Linux/macOS: efektif kullanıcı root mu?
+    resolve({ admin: !!(process.getuid && process.getuid() === 0) });
   });
 });
 
@@ -161,27 +196,46 @@ function vendorFromMac(mac) {
   return OUI_MAP[oui] || '';
 }
 
-// Windows ARP tablosunu oku -> [{ ip, mac }]
+// ARP/komşu tablosunu oku -> [{ ip, mac }] (platforma göre).
+// Windows: "arp -a" (MAC tireli), Linux: "ip neigh" (yoksa arp -n), macOS: "arp -a" (MAC iki nokta).
 function readArpTable() {
+  const cmd = IS_WIN ? 'arp -a' : (IS_LINUX ? 'ip neigh' : 'arp -an');
   return new Promise((resolve) => {
-    exec('arp -a', { windowsHide: true }, (err, stdout) => {
-      if (err) return resolve([]);
-      const entries = [];
-      (stdout || '').split('\n').forEach((line) => {
-        const m = line.match(/^\s*([\d.]+)\s+([0-9a-fA-F-]{17})\s+(\w+)/);
-        if (m) {
-          const ip = m[1];
-          const mac = m[2].replace(/-/g, ':').toLowerCase();
-          // Broadcast/multicast adreslerini ele
-          if (mac === 'ff:ff:ff:ff:ff:ff') return;
-          if (/^(01:00:5e|33:33)/.test(mac)) return;
-          if (ip.endsWith('.255') || ip.startsWith('224.') || ip.startsWith('239.')) return;
-          entries.push({ ip, mac });
-        }
-      });
-      resolve(entries);
+    exec(cmd, { windowsHide: true }, (err, stdout) => {
+      if (err) {
+        // Linux'ta ip yoksa arp -n'e düş
+        if (IS_LINUX) return exec('arp -n', { windowsHide: true }, (e2, out2) => resolve(parseArp(out2 || '')));
+        return resolve([]);
+      }
+      resolve(parseArp(stdout || ''));
     });
   });
+}
+function parseArp(stdout) {
+  const entries = [];
+  const accept = (ip, macRaw) => {
+    const mac = macRaw.replace(/-/g, ':').toLowerCase();
+    if (!/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/.test(mac)) return;
+    if (mac === 'ff:ff:ff:ff:ff:ff' || /^(01:00:5e|33:33)/.test(mac)) return;
+    if (ip.endsWith('.255') || ip.startsWith('224.') || ip.startsWith('239.')) return;
+    entries.push({ ip, mac });
+  };
+  stdout.split('\n').forEach((line) => {
+    // Windows: "  192.168.0.1   00-11-22-33-44-55   dynamic"
+    let m = line.match(/^\s*([\d.]+)\s+([0-9a-fA-F]{2}([-:])[0-9a-fA-F]{2}(?:\3[0-9a-fA-F]{2}){4})\s/);
+    if (m) return accept(m[1], m[2]);
+    // Linux "ip neigh": "192.168.0.1 dev eth0 lladdr 00:11:22:33:44:55 REACHABLE"
+    m = line.match(/^([\d.]+)\s.*lladdr\s+([0-9a-fA-F:]{17})/);
+    if (m) return accept(m[1], m[2]);
+    // macOS/BSD "arp -an": "? (192.168.0.1) at 0:11:22:33:44:55 on en0"
+    m = line.match(/\(([\d.]+)\)\s+at\s+([0-9a-fA-F:]+)/);
+    if (m) {
+      // macOS tek haneli oktetleri sıfırla doldur (0:11 -> 00:11)
+      const mac = m[2].split(':').map((x) => x.padStart(2, '0')).join(':');
+      return accept(m[1], mac);
+    }
+  });
+  return entries;
 }
 
 // nmap sonucuna ARP tablosunu birleştir (her şeyi bul: nmap'in kaçırdığı IP/MAC dahil).
@@ -500,18 +554,31 @@ ipcMain.handle('wsl:prepareRoot', async () => {
   });
 });
 
-// Tüm araçların kurulu olup olmadığını topluca kontrol et
+// Bir aracın kurulu olup olmadığını platforma göre kontrol et.
+function whichTool(id) {
+  return new Promise((res) => {
+    if (IS_WIN) return exec(`wsl.exe -- which ${id}`, { windowsHide: true }, (err, out) => res(!err && !!(out || '').trim()));
+    exec(`command -v ${id}`, { windowsHide: true }, (err, out) => res(!err && !!(out || '').trim()));
+  });
+}
+
+// Tüm araçların kurulu olup olmadığını topluca kontrol et.
+// "kurulu" = portable binary VAR  ya da  (Windows'ta WSL içinde / Linux-macOS'ta PATH'te) bulunabiliyor.
 ipcMain.handle('tools:check', async () => {
-  if (process.platform !== 'win32') return { wsl: false, tools: {} };
+  const tools = {}; const portableMap = {};
+  const ids = TOOL_CATALOG.map((x) => x.id);
+  // Portable durumu (her platformda destekleniyorsa)
+  ids.forEach((id) => { if (portable.binPath(id)) { tools[id] = true; portableMap[id] = true; } });
+
+  if (!IS_WIN) {
+    for (const id of ids) if (!tools[id]) tools[id] = await whichTool(id);
+    return { wsl: true, native: true, tools, portable: portableMap };
+  }
   const wslOk = await new Promise((res) =>
     exec('wsl.exe -l -q', { windowsHide: true, encoding: 'utf16le' }, (err, out) => res(!err && !!(out || '').trim())));
-  if (!wslOk) return { wsl: false, tools: {} };
-  const tools = {};
-  for (const tdef of TOOL_CATALOG) {
-    tools[tdef.id] = await new Promise((res) =>
-      exec(`wsl.exe -- which ${tdef.id}`, { windowsHide: true }, (err, out) => res(!err && !!(out || '').trim())));
-  }
-  return { wsl: true, tools };
+  if (!wslOk) return { wsl: false, tools, portable: portableMap };
+  for (const id of ids) if (!tools[id]) tools[id] = await whichTool(id);
+  return { wsl: true, tools, portable: portableMap };
 });
 
 // Araçları WSL içinde root olarak kur (çıktıyı canlı akıt). 'all' → tüm araçlar.
@@ -541,14 +608,58 @@ ipcMain.handle('tools:install', async (e, toolId) => {
   return runInstall(tdef.install, tdef.name);
 });
 
+// ---------------- Portable araç yöneticisi (WSL'siz native binary) ----------------
+ipcMain.handle('portable:status', async () => portable.statusAll());
+
+let currentPortable = null;
+ipcMain.handle('portable:install', async (e, id) => {
+  if (currentPortable) return { ok: false, error: 'Zaten bir portable kurulum sürüyor: ' + currentPortable };
+  if (!portable.isSupported(id)) return { ok: false, error: 'Bu platformda portable desteklenmiyor.' };
+  currentPortable = id;
+  mainWindow.webContents.send('portable:progress', { id, phase: 'start', pct: 0, msg: 'Başlatılıyor...' });
+  try {
+    const r = await portable.install(id, (p) => mainWindow.webContents.send('portable:progress', { id, ...p }));
+    log(`portable kuruldu: ${id} @ ${r.path} (${r.version})`);
+    mainWindow.webContents.send('portable:done', { id, ok: true, ...r });
+    return { ok: true, ...r };
+  } catch (err) {
+    log(`portable kurulum hatası (${id}): ${err}`);
+    mainWindow.webContents.send('portable:done', { id, ok: false, error: String(err.message || err) });
+    return { ok: false, error: String(err.message || err) };
+  } finally { currentPortable = null; }
+});
+
+ipcMain.handle('portable:installAll', async () => {
+  if (currentPortable) return { ok: false, error: 'Zaten bir portable kurulum sürüyor.' };
+  const ids = portable.listSupported();
+  const results = {};
+  for (const id of ids) {
+    currentPortable = id;
+    mainWindow.webContents.send('portable:progress', { id, phase: 'start', pct: 0, msg: `${id} kuruluyor...` });
+    try {
+      const r = await portable.install(id, (p) => mainWindow.webContents.send('portable:progress', { id, ...p }));
+      results[id] = { ok: true, version: r.version };
+      mainWindow.webContents.send('portable:done', { id, ok: true, ...r });
+    } catch (err) {
+      results[id] = { ok: false, error: String(err.message || err) };
+      mainWindow.webContents.send('portable:done', { id, ok: false, error: String(err.message || err) });
+    }
+  }
+  currentPortable = null;
+  mainWindow.webContents.send('portable:allDone', results);
+  return { ok: true, results };
+});
+
+ipcMain.handle('portable:uninstall', async (e, id) => ({ ok: portable.uninstall(id) }));
+
 // ---------------- nuclei taraması ----------------
 let currentNuclei = null;
 ipcMain.handle('nuclei:run', async (e, { target, severity }) => {
   if (currentNuclei) return { ok: false, error: 'Zaten çalışan nuclei var.' };
-  if (process.platform !== 'win32') return { ok: false, error: 'WSL gerekli' };
-  const args = ['--', 'nuclei', '-u', target, '-jsonl', '-silent', '-nc'];
-  if (severity && severity !== 'all') { args.push('-severity', severity); }
-  try { currentNuclei = spawn('wsl.exe', args, { windowsHide: true }); }
+  const nucleiArgs = ['-u', target, '-jsonl', '-silent', '-nc'];
+  if (severity && severity !== 'all') { nucleiArgs.push('-severity', severity); }
+  const { cmd, args } = toolProc('nuclei', nucleiArgs);
+  try { currentNuclei = spawn(cmd, args, { windowsHide: true }); }
   catch (err) { return { ok: false, error: String(err) }; }
   log('nuclei: ' + args.join(' '));
 
@@ -597,21 +708,21 @@ function sanitizeTarget(t) {
 }
 const RUN_TEMPLATES = {
   // masscan ham soket ister -> root
-  masscan: (target, o) => ['-u', 'root', '--', 'masscan', target, '-p' + (o.ports || '1-1000'), '--rate', String(o.rate || 1000)],
-  enum4linux: (target) => ['--', 'enum4linux', '-a', target],
-  gobuster: (target, o) => ['--', 'gobuster', 'dir', '-u', (target.startsWith('http') ? target : 'http://' + target),
-    '-w', o.wordlist || '/usr/share/wordlists/dirb/common.txt', '-q'],
-  nikto: (target) => ['--', 'nikto', '-h', target],
-  whatweb: (target) => ['--', 'whatweb', target],
+  masscan: (target, o) => ({ tool: 'masscan', root: true, args: [target, '-p' + (o.ports || '1-1000'), '--rate', String(o.rate || 1000)] }),
+  enum4linux: (target) => ({ tool: 'enum4linux', args: ['-a', target] }),
+  gobuster: (target, o) => ({ tool: 'gobuster', args: ['dir', '-u', (target.startsWith('http') ? target : 'http://' + target),
+    '-w', o.wordlist || '/usr/share/wordlists/dirb/common.txt', '-q'] }),
+  nikto: (target) => ({ tool: 'nikto', args: ['-h', target] }),
+  whatweb: (target) => ({ tool: 'whatweb', args: [target] }),
 };
 let currentTool = null;
 ipcMain.handle('tool:run', async (e, { tool, target, opts }) => {
   if (currentTool) return { ok: false, error: 'Zaten çalışan bir araç var.' };
-  if (process.platform !== 'win32') return { ok: false, error: 'WSL gerekli' };
   if (!RUN_TEMPLATES[tool]) return { ok: false, error: 'Bilinmeyen araç' };
   if (!sanitizeTarget(target)) return { ok: false, error: 'Geçersiz hedef' };
-  const args = RUN_TEMPLATES[tool](target.trim(), opts || {});
-  try { currentTool = spawn('wsl.exe', args, { windowsHide: true }); }
+  const tpl = RUN_TEMPLATES[tool](target.trim(), opts || {});
+  const { cmd, args } = toolProc(tpl.tool, tpl.args, { root: tpl.root });
+  try { currentTool = spawn(cmd, args, { windowsHide: true }); }
   catch (err) { return { ok: false, error: String(err) }; }
   log(`${tool}: wsl ${args.join(' ')}`);
 
@@ -650,15 +761,38 @@ ipcMain.handle('tool:stop', async () => { if (currentTool) { currentTool.kill();
 
 // ---------------- Exploit arama (searchsploit — salt-okunur, güvenli) ----------------
 ipcMain.handle('exploit:search', async (e, term) => {
-  if (process.platform !== 'win32') return { ok: false, error: 'WSL gerekli' };
   // Arama terimi: harf/rakam/boşluk/.-_/ izinli; kabuk metakarakterleri yasak
   if (!/^[a-zA-Z0-9 ._/-]{1,80}$/.test(term || '')) return { ok: false, error: 'Geçersiz arama terimi' };
+  const { cmd, args } = toolProc('searchsploit', ['--color=never', ...term.trim().split(/\s+/)]);
   return new Promise((resolve) => {
-    execFile('wsl.exe', ['--', 'searchsploit', '--color=never', ...term.trim().split(/\s+/)],
-      { windowsHide: true, timeout: 60000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-        resolve({ ok: true, output: (stdout || '') + (stderr || '') });
-      });
+    execFile(cmd, args, { windowsHide: true, timeout: 60000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({ ok: true, output: (stdout || '') + (stderr || '') });
+    });
   });
+});
+
+// ---------------- Oto-exploit eşleme (servis sürümü -> searchsploit JSON) ----------------
+ipcMain.handle('exploit:auto', async (e, terms) => {
+  if (!Array.isArray(terms)) return { ok: false, error: 'liste bekleniyor' };
+  const uniq = [...new Set(terms.map((x) => (x || '').trim())
+    .filter((x) => x && /^[a-zA-Z0-9 ._/-]{2,60}$/.test(x)))].slice(0, 25);
+  const results = {};
+  for (const term of uniq) {
+    const { cmd, args } = toolProc('searchsploit', ['-j', '--color=never', ...term.split(/\s+/)]);
+    results[term] = await new Promise((resolve) => {
+      execFile(cmd, args, { windowsHide: true, timeout: 45000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+        let list = [];
+        try {
+          const j = JSON.parse(stdout || '{}');
+          list = (j.RESULTS_EXPLOIT || []).map((r) => ({
+            title: r.Title || '', path: r.Path || '', edb: r['EDB-ID'] || '',
+          }));
+        } catch (_) { /* JSON parse edilemezse boş */ }
+        resolve(list);
+      });
+    });
+  }
+  return { ok: true, results };
 });
 
 // ---------------- Hydra (saldırgan modül — sıkı kapı) ----------------
@@ -675,7 +809,6 @@ function inScopeMain(target, scope) {
 let currentHydra = null;
 ipcMain.handle('attack:hydra', async (e, { target, service, user, userList, passList, confirmed }) => {
   if (currentHydra) return { ok: false, error: 'Zaten çalışan hydra var.' };
-  if (process.platform !== 'win32') return { ok: false, error: 'WSL gerekli' };
   // KAPI 1: açık onay
   if (!confirmed) return { ok: false, error: 'Onay gerekli' };
   // KAPI 2: engagement modu + scope zorunlu
@@ -693,13 +826,14 @@ ipcMain.handle('attack:hydra', async (e, { target, service, user, userList, pass
   if (!sanitizeTarget(target)) return { ok: false, error: 'Geçersiz hedef' };
   if (!HYDRA_SERVICES.includes(service)) return { ok: false, error: 'Desteklenmeyen servis' };
 
-  const args = ['--', 'hydra'];
-  if (user && /^[a-zA-Z0-9._-]{1,32}$/.test(user)) args.push('-l', user);
-  else args.push('-L', userList && /^[\w./-]+$/.test(userList) ? userList : '/usr/share/wordlists/metasploit/unix_users.txt');
-  args.push('-P', passList && /^[\w./-]+$/.test(passList) ? passList : '/usr/share/wordlists/rockyou.txt');
-  args.push('-t', '4', '-f', target, service);
+  const hArgs = [];
+  if (user && /^[a-zA-Z0-9._-]{1,32}$/.test(user)) hArgs.push('-l', user);
+  else hArgs.push('-L', userList && /^[\w./-]+$/.test(userList) ? userList : '/usr/share/wordlists/metasploit/unix_users.txt');
+  hArgs.push('-P', passList && /^[\w./-]+$/.test(passList) ? passList : '/usr/share/wordlists/rockyou.txt');
+  hArgs.push('-t', '4', '-f', target, service);
+  const { cmd, args } = toolProc('hydra', hArgs);
 
-  try { currentHydra = spawn('wsl.exe', args, { windowsHide: true }); }
+  try { currentHydra = spawn(cmd, args, { windowsHide: true }); }
   catch (err) { return { ok: false, error: String(err) }; }
   db.addAudit(ws.id, 'attack', `hydra ${service} → ${target} (onaylı)`);
   log('hydra: wsl ' + args.join(' '));
@@ -715,10 +849,10 @@ ipcMain.handle('attack:hydraStop', async () => { if (currentHydra) { currentHydr
 // ---------------- Metasploit (Faz 4) ----------------
 // Modül arama (salt-okunur, güvenli).
 ipcMain.handle('msf:search', async (e, term) => {
-  if (process.platform !== 'win32') return { ok: false, error: 'WSL gerekli' };
   if (!/^[a-zA-Z0-9 ._/:-]{1,80}$/.test(term || '')) return { ok: false, error: 'Geçersiz arama terimi' };
+  const { cmd, args } = toolProc('msfconsole', ['-q', '-x', `search ${term.trim()}; exit`]);
   return new Promise((resolve) => {
-    execFile('wsl.exe', ['--', 'msfconsole', '-q', '-x', `search ${term.trim()}; exit`],
+    execFile(cmd, args,
       { windowsHide: true, timeout: 180000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
         const out = stdout || '';
         const modules = [];
@@ -734,10 +868,10 @@ ipcMain.handle('msf:search', async (e, term) => {
 
 // Modül bilgisi (salt-okunur).
 ipcMain.handle('msf:info', async (e, module) => {
-  if (process.platform !== 'win32') return { ok: false, error: 'WSL gerekli' };
   if (!/^[a-z0-9_\/]+$/i.test(module || '')) return { ok: false, error: 'Geçersiz modül' };
+  const { cmd, args } = toolProc('msfconsole', ['-q', '-x', `info ${module}; exit`]);
   return new Promise((resolve) => {
-    execFile('wsl.exe', ['--', 'msfconsole', '-q', '-x', `info ${module}; exit`],
+    execFile(cmd, args,
       { windowsHide: true, timeout: 120000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
         resolve({ ok: true, output: stdout || '' });
       });
@@ -748,7 +882,6 @@ ipcMain.handle('msf:info', async (e, module) => {
 let currentMsf = null;
 ipcMain.handle('msf:run', async (e, { module, target, options, confirmed }) => {
   if (currentMsf) return { ok: false, error: 'Zaten çalışan Metasploit oturumu var.' };
-  if (process.platform !== 'win32') return { ok: false, error: 'WSL gerekli' };
   if (!confirmed) return { ok: false, error: 'Onay gerekli' };
   const ws = db.getActiveWorkspace();
   if (!ws || ws.mode !== 'engagement') {
@@ -771,7 +904,8 @@ ipcMain.handle('msf:run', async (e, { module, target, options, confirmed }) => {
   });
   cmds += '; run; exit';
 
-  try { currentMsf = spawn('wsl.exe', ['--', 'msfconsole', '-q', '-x', cmds], { windowsHide: true }); }
+  const msfProc = toolProc('msfconsole', ['-q', '-x', cmds]);
+  try { currentMsf = spawn(msfProc.cmd, msfProc.args, { windowsHide: true }); }
   catch (err) { return { ok: false, error: String(err) }; }
   db.addAudit(ws.id, 'attack', `msf ${module} → ${target} (onaylı)`);
   log('msf: ' + cmds);
@@ -895,6 +1029,50 @@ function buildProfessionalReport(ws, a) {
     </div>
   </body></html>`;
 }
+
+// ---------------- CVE zenginleştirme (NVD API 2.0 + yerel önbellek) ----------------
+const cveCacheFile = () => path.join(dataDir(), 'cve-cache.json');
+function loadCveCache() { try { return JSON.parse(fs.readFileSync(cveCacheFile(), 'utf8')); } catch (e) { return {}; } }
+function saveCveCache(c) { try { fs.writeFileSync(cveCacheFile(), JSON.stringify(c)); } catch (e) {} }
+
+ipcMain.handle('cve:enrich', async (e, ids) => {
+  if (!Array.isArray(ids)) return { ok: false, error: 'liste bekleniyor' };
+  const cache = loadCveCache();
+  const uniq = [...new Set(ids.filter((x) => /^CVE-\d{4}-\d{4,}$/.test(x)))];
+  const info = {};
+  let fetched = 0;
+  for (const id of uniq) {
+    if (cache[id]) { info[id] = cache[id]; continue; }
+    try {
+      const data = await new Promise((res, rej) =>
+        httpsGetJson(`https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${id}`, (err, d) => err ? rej(err) : res(d)));
+      const cve = data && data.vulnerabilities && data.vulnerabilities[0] && data.vulnerabilities[0].cve;
+      let item = { cvss: null, severity: 'unknown', desc: '' };
+      if (cve) {
+        const d = (cve.descriptions || []).find((x) => x.lang === 'en');
+        item.desc = d ? d.value : '';
+        const m = cve.metrics || {};
+        const metric = (m.cvssMetricV31 || m.cvssMetricV30 || m.cvssMetricV2 || [])[0];
+        if (metric && metric.cvssData) {
+          item.cvss = metric.cvssData.baseScore;
+          item.severity = (metric.cvssData.baseSeverity || metric.baseSeverity || '').toLowerCase() || sevFromScore(item.cvss);
+        }
+      }
+      cache[id] = item; info[id] = item; fetched++;
+      // NVD oran sınırı dostu (anahtarsız ~5 istek/30s)
+      await new Promise((r) => setTimeout(r, 700));
+    } catch (err) {
+      info[id] = { cvss: null, severity: 'unknown', desc: '', error: true };
+    }
+  }
+  if (fetched) saveCveCache(cache);
+  // Aktif workspace'teki severity'leri güncelle (rapor doğruluğu)
+  try {
+    const ws = db.getActiveWorkspace();
+    if (ws) Object.entries(info).forEach(([id, v]) => { if (v.severity && v.severity !== 'unknown') db.setVulnSeverity(ws.id, id, v.severity); });
+  } catch (err) { log('cve severity güncelleme hatası: ' + err); }
+  return { ok: true, info };
+});
 
 // ---------------- OSINT: Shodan ----------------
 ipcMain.handle('osint:shodan', async (e, ip) => {
