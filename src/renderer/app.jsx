@@ -761,17 +761,29 @@ function App() {
     localStorage.setItem('deviceNotes', JSON.stringify(next));
   };
 
-  /* init */
+  /* init — paint hızı için faz faz yükle */
   useEffect(() => {
+    // FAZ 1 (paint için kritik): tema, ws, hedef
     window.api.getSettings().then((s) => { setSettings((p) => ({ ...p, ...s })); });
-    checkNmap();
-    window.api.checkAdmin().then((r) => setAdmin(r.admin));
-    window.api.localRange().then((r) => { if (r.ok) { setTarget(r.cidr); setGateway(r.gateway); } });
     refreshWorkspaces();
-    window.api.wslCheck().then((r) => setWsl({ checked: true, installed: r.installed, distros: r.distros }));
-    window.api.toolsCatalog().then(setToolCatalog);
-    refreshTools();
-    refreshPortable();
+    window.api.localRange().then((r) => { if (r.ok) { setTarget(r.cidr); setGateway(r.gateway); } });
+
+    // FAZ 2 (paint'ten sonra, ~100 ms): nmap + admin
+    setTimeout(() => {
+      checkNmap();
+      window.api.checkAdmin().then((r) => setAdmin(r.admin));
+    }, 100);
+
+    // FAZ 3 (idle): araç katalogu + WSL — Tools sekmesi açılana kadar acelesi yok
+    const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 600));
+    idle(() => {
+      window.api.wslCheck().then((r) => setWsl({ checked: true, installed: r.installed, distros: r.distros }));
+      window.api.toolsCatalog().then(setToolCatalog);
+      refreshTools();
+      refreshPortable();
+    });
+
+    // Event listener'lar (ucuz — sadece kanal kaydı)
     window.api.onPortableProgress((p) => setPortableProg((m) => ({ ...m, [p.id]: p })));
     window.api.onPortableDone((d) => {
       setPortableProg((m) => ({ ...m, [d.id]: { phase: 'done', pct: 100, msg: d.ok ? 'Kuruldu' : ('Hata: ' + d.error) } }));

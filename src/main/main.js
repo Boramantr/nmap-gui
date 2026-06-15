@@ -111,9 +111,10 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  // Pencereyi hemen göster — backgroundColor flash'ı maskeler, sonra maximize.
+  mainWindow.maximize();
+  mainWindow.show();
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  // Pencereli tam ekran (maximized) — ekran sınırlarına kadar, ama yine sürüklenebilir.
-  mainWindow.once('ready-to-show', () => { mainWindow.maximize(); mainWindow.show(); });
 
   // Küçültünce görev çubuğundan da gizle, sistem tepsisinde dur.
   mainWindow.on('minimize', (e) => {
@@ -166,13 +167,23 @@ ipcMain.handle('win:maximize', () => {
 ipcMain.handle('win:close', () => { if (mainWindow) mainWindow.close(); });
 ipcMain.handle('win:isMaximized', () => mainWindow ? mainWindow.isMaximized() : false);
 
-app.whenReady().then(async () => {
-  ensureDirs();
+// DB ve portable'ı arka planda başlat — pencere bunları beklemez.
+// IPC handler'ları db'ye dokunmadan önce dbReady promise'ini bekler.
+let dbReady;
+function startBackgroundInit() {
   portable.init(dataDir());
-  try { await db.initDb(dataDir()); log('Veritabanı hazır.'); }
-  catch (e) { log('DB init hatası: ' + e); }
+  dbReady = db.initDb(dataDir())
+    .then(() => { log('Veritabanı hazır.'); if (mainWindow) mainWindow.webContents.send('db:ready'); })
+    .catch((e) => { log('DB init hatası: ' + e); });
+}
+
+app.whenReady().then(() => {
+  ensureDirs();
   log('Uygulama başlatıldı.');
+  // 1) Pencereyi hemen aç — DB beklemez
   createWindow();
+  // 2) DB + portable arka planda yüklenir
+  startBackgroundInit();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -554,9 +565,12 @@ ipcMain.handle('notify', async (event, { title, body }) => {
   return { ok: true };
 });
 
+// DB'ye dokunmadan önce hazır olduğundan emin ol.
+async function waitDb() { try { if (dbReady) await dbReady; } catch (_) {} }
+
 // ---------------- Workspace / Engagement ----------------
-ipcMain.handle('ws:list', async () => db.listWorkspaces());
-ipcMain.handle('ws:active', async () => db.getActiveWorkspace());
+ipcMain.handle('ws:list', async () => { await waitDb(); return db.listWorkspaces(); });
+ipcMain.handle('ws:active', async () => { await waitDb(); return db.getActiveWorkspace(); });
 ipcMain.handle('ws:create', async (e, { name, mode, scope }) => db.createWorkspace(name, mode, scope));
 ipcMain.handle('ws:setActive', async (e, id) => db.setActiveWorkspace(id));
 ipcMain.handle('ws:update', async (e, { id, fields }) => db.updateWorkspace(id, fields));
