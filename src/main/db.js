@@ -38,10 +38,28 @@ async function initDb(userDataDir) {
     CREATE TABLE IF NOT EXISTS evidence (
       id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER, host_ip TEXT, type TEXT, label TEXT,
       path TEXT, created TEXT);
+    CREATE TABLE IF NOT EXISTS notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER, host_ip TEXT,
+      content TEXT DEFAULT '', updated TEXT, UNIQUE(ws, host_ip));
+    CREATE TABLE IF NOT EXISTS creds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER, host TEXT DEFAULT '',
+      service TEXT DEFAULT '', username TEXT DEFAULT '',
+      pass_enc TEXT DEFAULT '', hash TEXT DEFAULT '', hash_type TEXT DEFAULT '',
+      hashcat_mode TEXT DEFAULT '', source TEXT DEFAULT '', notes TEXT DEFAULT '',
+      captured_at TEXT);
   `);
   // Şema göçü: nuclei için severity sütunu
   try { db.run("ALTER TABLE vulns ADD COLUMN severity TEXT DEFAULT ''"); } catch (e) {}
   try { db.run("ALTER TABLE vulns ADD COLUMN source TEXT DEFAULT 'nmap'"); } catch (e) {}
+  // Faz 1: finding triyaj sütunları
+  try { db.run("ALTER TABLE vulns ADD COLUMN status TEXT DEFAULT 'open'"); } catch (e) {}
+  try { db.run("ALTER TABLE vulns ADD COLUMN notes TEXT DEFAULT ''"); } catch (e) {}
+  try { db.run("ALTER TABLE vulns ADD COLUMN mitre TEXT DEFAULT ''"); } catch (e) {}
+  // Faz 1: workspace engagement metadata
+  try { db.run("ALTER TABLE workspaces ADD COLUMN client TEXT DEFAULT ''"); } catch (e) {}
+  try { db.run("ALTER TABLE workspaces ADD COLUMN start_date TEXT DEFAULT ''"); } catch (e) {}
+  try { db.run("ALTER TABLE workspaces ADD COLUMN end_date TEXT DEFAULT ''"); } catch (e) {}
+  try { db.run("ALTER TABLE workspaces ADD COLUMN roe TEXT DEFAULT ''"); } catch (e) {}
   save();
   // İlk açılışta varsayılan workspace
   if (rows('SELECT COUNT(*) c FROM workspaces')[0].c === 0) {
@@ -85,14 +103,17 @@ function setActiveWorkspace(id) {
   return getActiveWorkspace();
 }
 function updateWorkspace(id, fields) {
-  if ('mode' in fields) run('UPDATE workspaces SET mode = ? WHERE id = ?', [fields.mode, id]);
-  if ('scope' in fields) run('UPDATE workspaces SET scope = ? WHERE id = ?', [fields.scope, id]);
-  if ('name' in fields) run('UPDATE workspaces SET name = ? WHERE id = ?', [fields.name, id]);
+  const allowed = ['mode', 'scope', 'name', 'client', 'start_date', 'end_date', 'roe'];
+  allowed.forEach((k) => {
+    if (k in fields) run(`UPDATE workspaces SET ${k} = ? WHERE id = ?`, [fields[k] ?? '', id]);
+  });
   save();
   return rows('SELECT * FROM workspaces WHERE id = ?', [id])[0];
 }
 function deleteWorkspace(id) {
-  ['hosts','services','vulns','scans','audit'].forEach((t) => run(`DELETE FROM ${t} WHERE ws = ?`, [id]));
+  ['hosts','services','vulns','scans','audit','evidence','creds','notes'].forEach((t) => {
+    try { run(`DELETE FROM ${t} WHERE ws = ?`, [id]); } catch (e) {}
+  });
   run('DELETE FROM workspaces WHERE id = ?', [id]);
   if (!getActiveWorkspace()) { const w = listWorkspaces()[0]; if (w) setActiveWorkspace(w.id); }
   save();
@@ -168,6 +189,141 @@ function setVulnSeverity(ws, cve, severity) {
   save();
 }
 
+/* ---------- Finding triyaj (Faz 1) ---------- */
+const FINDING_STATUSES = ['open', 'fixed', 'false_positive', 'accepted', 'in_progress'];
+function listFindings(ws) {
+  // vulns + host name/vendor join
+  return rows(`SELECT v.id, v.host_ip, v.port, v.cve, v.script, v.severity, v.source,
+                      COALESCE(v.status,'open') AS status, COALESCE(v.notes,'') AS notes,
+                      COALESCE(v.mitre,'') AS mitre, v.last_seen,
+                      COALESCE(h.name,'') AS host_name, COALESCE(h.vendor,'') AS host_vendor
+               FROM vulns v LEFT JOIN hosts h ON h.ws = v.ws AND h.ip = v.host_ip
+               WHERE v.ws = ? ORDER BY
+                 CASE COALESCE(v.severity,'info')
+                   WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3
+                   WHEN 'low' THEN 2 ELSE 1 END DESC, v.host_ip`, [ws]);
+}
+function updateFinding(id, fields) {
+  if ('status' in fields) {
+    const s = FINDING_STATUSES.includes(fields.status) ? fields.status : 'open';
+    run('UPDATE vulns SET status = ? WHERE id = ?', [s, id]);
+  }
+  if ('notes' in fields) run('UPDATE vulns SET notes = ? WHERE id = ?', [String(fields.notes || ''), id]);
+  if ('mitre' in fields) run('UPDATE vulns SET mitre = ? WHERE id = ?', [String(fields.mitre || ''), id]);
+  if ('severity' in fields) run('UPDATE vulns SET severity = ? WHERE id = ?', [String(fields.severity || 'info'), id]);
+  save();
+  return rows('SELECT * FROM vulns WHERE id = ?', [id])[0];
+}
+function deleteFinding(id) { run('DELETE FROM vulns WHERE id = ?', [id]); save(); return true; }
+// Belirtilen host listesindeki etiketsiz vulns'lara toplu MITRE tag uygula.
+function bulkTagMitre(ws, hosts, mitre) {
+  const uniq = [...new Set((hosts || []).filter(Boolean))];
+  if (!uniq.length || !mitre) return 0;
+  let n = 0;
+  uniq.forEach((h) => {
+    run("UPDATE vulns SET mitre = ? WHERE ws = ? AND host_ip = ? AND (mitre IS NULL OR mitre = '')",
+      [mitre, ws, h]);
+    n++;
+  });
+  save();
+  return n;
+}
+
+/* ---------- Credentials / Loot vault (Faz 2) ---------- */
+// pass_enc, main.js içinde safeStorage ile şifrelenmiş base64 string'tir.
+// DB sadece taşıyıcı; deşifreleme yalnızca main process'te (renderer'a düz parola asla gitmez).
+function addCred(ws, c) {
+  const now = new Date().toISOString();
+  run(`INSERT INTO creds (ws, host, service, username, pass_enc, hash, hash_type, hashcat_mode, source, notes, captured_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [ws, c.host || '', c.service || '', c.username || '', c.pass_enc || '',
+     c.hash || '', c.hash_type || '', c.hashcat_mode || '', c.source || '', c.notes || '', now]);
+  save();
+  return rows('SELECT * FROM creds ORDER BY id DESC LIMIT 1')[0];
+}
+function listCreds(ws) {
+  // pass_enc'i listede DÖNDÜRMEYİZ — yalnızca getCredEnc() ile reveal akışında okunur
+  return rows(`SELECT id, ws, host, service, username, hash, hash_type, hashcat_mode,
+                      source, notes, captured_at,
+                      CASE WHEN pass_enc IS NULL OR pass_enc='' THEN 0 ELSE 1 END AS has_pass
+               FROM creds WHERE ws = ? ORDER BY id DESC`, [ws]);
+}
+function getCredEnc(id) {
+  const r = rows('SELECT pass_enc FROM creds WHERE id = ?', [id])[0];
+  return r ? (r.pass_enc || '') : '';
+}
+function updateCred(id, fields) {
+  const allowed = ['host', 'service', 'username', 'hash', 'hash_type', 'hashcat_mode', 'source', 'notes', 'pass_enc'];
+  allowed.forEach((k) => {
+    if (k in fields) run(`UPDATE creds SET ${k} = ? WHERE id = ?`, [String(fields[k] == null ? '' : fields[k]), id]);
+  });
+  save();
+  return rows('SELECT id, host, service, username, hash, hash_type, source, captured_at FROM creds WHERE id = ?', [id])[0];
+}
+function deleteCred(id) { run('DELETE FROM creds WHERE id = ?', [id]); save(); return true; }
+
+/* ---------- Host notes (Faz 4) ---------- */
+function setNote(ws, hostIp, content) {
+  const now = new Date().toISOString();
+  run(`INSERT INTO notes (ws, host_ip, content, updated) VALUES (?,?,?,?)
+       ON CONFLICT(ws, host_ip) DO UPDATE SET content = excluded.content, updated = excluded.updated`,
+    [ws, hostIp, String(content || ''), now]);
+  save();
+  return rows('SELECT * FROM notes WHERE ws = ? AND host_ip = ?', [ws, hostIp])[0];
+}
+function getNote(ws, hostIp) {
+  const r = rows('SELECT * FROM notes WHERE ws = ? AND host_ip = ?', [ws, hostIp])[0];
+  return r || null;
+}
+function listNotes(ws) {
+  return rows('SELECT host_ip, content, updated FROM notes WHERE ws = ? AND content != ""', [ws]);
+}
+function deleteNote(ws, hostIp) {
+  run('DELETE FROM notes WHERE ws = ? AND host_ip = ?', [ws, hostIp]); save(); return true;
+}
+
+/* ---------- Hash tipi otomatik tespiti (Faz 2) ---------- */
+// hashcat -m mod numarasıyla birlikte döner.
+const HASH_PATTERNS = [
+  { re: /^\$2[aby]\$\d{2}\$[A-Za-z0-9./]{53}$/, type: 'bcrypt', mode: '3200' },
+  { re: /^\$argon2(id|i|d)\$/i, type: 'argon2', mode: '' },
+  { re: /^\$1\$[A-Za-z0-9./]{1,8}\$[A-Za-z0-9./]{22}$/, type: 'md5crypt', mode: '500' },
+  { re: /^\$5\$/, type: 'sha256crypt', mode: '7400' },
+  { re: /^\$6\$/, type: 'sha512crypt', mode: '1800' },
+  { re: /^\$y\$/, type: 'yescrypt', mode: '' },
+  // NTLMv2 (Responder format): user::domain:challenge:hash:blob
+  { re: /^[^:]+::[^:]*:[A-Fa-f0-9]{16}:[A-Fa-f0-9]{32}:[A-Fa-f0-9]+$/, type: 'NetNTLMv2', mode: '5600' },
+  // NTLMv1
+  { re: /^[^:]+::[^:]*:[A-Fa-f0-9]{48}:[A-Fa-f0-9]{48}:[A-Fa-f0-9]{16}$/, type: 'NetNTLMv1', mode: '5500' },
+  // LM:NTLM (pwdump format) — son alanı NTLM say
+  { re: /^[^:]+:\d+:[A-Fa-f0-9]{32}:[A-Fa-f0-9]{32}:::$/, type: 'NTLM (pwdump)', mode: '1000' },
+  // Kerberoast TGS-REP
+  { re: /^\$krb5tgs\$23\$/i, type: 'Kerberoast (RC4)', mode: '13100' },
+  { re: /^\$krb5tgs\$(17|18)\$/i, type: 'Kerberoast (AES)', mode: '19700' },
+  // ASREProast
+  { re: /^\$krb5asrep\$23\$/i, type: 'AS-REP roast', mode: '18200' },
+  // MySQL
+  { re: /^\*[A-Fa-f0-9]{40}$/, type: 'MySQL4.1+', mode: '300' },
+  // PostgreSQL md5
+  { re: /^md5[a-f0-9]{32}$/, type: 'PostgreSQL md5', mode: '12' },
+  // Cisco
+  { re: /^\$8\$[A-Za-z0-9./]{14}\$/, type: 'Cisco IOS PBKDF2', mode: '9200' },
+  { re: /^\$9\$[A-Za-z0-9./]{14}\$/, type: 'Cisco IOS scrypt', mode: '9300' },
+  // Düz hex hash'ler (uzunluk bazlı)
+  { re: /^[A-Fa-f0-9]{32}$/, type: 'MD5 / NTLM', mode: '0/1000' },
+  { re: /^[A-Fa-f0-9]{40}$/, type: 'SHA1', mode: '100' },
+  { re: /^[A-Fa-f0-9]{56}$/, type: 'SHA224', mode: '1300' },
+  { re: /^[A-Fa-f0-9]{64}$/, type: 'SHA256', mode: '1400' },
+  { re: /^[A-Fa-f0-9]{96}$/, type: 'SHA384', mode: '10800' },
+  { re: /^[A-Fa-f0-9]{128}$/, type: 'SHA512', mode: '1700' },
+];
+function detectHash(h) {
+  const s = (h || '').trim();
+  if (!s) return { type: '', mode: '' };
+  for (const p of HASH_PATTERNS) if (p.re.test(s)) return { type: p.type, mode: p.mode };
+  return { type: 'bilinmiyor', mode: '' };
+}
+
 /* ---------- Audit log ---------- */
 function addAudit(ws, action, detail) {
   run('INSERT INTO audit (ws, date, action, detail) VALUES (?,?,?,?)',
@@ -191,4 +347,7 @@ module.exports = {
   initDb, createWorkspace, listWorkspaces, getActiveWorkspace, setActiveWorkspace,
   updateWorkspace, deleteWorkspace, persistScan, workspaceAssets, addAudit, listAudit,
   addNucleiFindings, addEvidence, listEvidence, deleteEvidence, setVulnSeverity,
+  listFindings, updateFinding, deleteFinding, FINDING_STATUSES, bulkTagMitre,
+  addCred, listCreds, getCredEnc, updateCred, deleteCred, detectHash,
+  setNote, getNote, listNotes, deleteNote,
 };
