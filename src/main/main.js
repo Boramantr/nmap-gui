@@ -104,7 +104,6 @@ function createWindow() {
     title: 'NmapGUI',
     icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
     frame: false,
-    show: false,                 // ready-to-show'da göster — gri flash önleyici
     backgroundColor: '#0e0e11',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -113,11 +112,33 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  // ready-to-show: ilk frame hazır olunca maximize + show — flash önleyici
   mainWindow.once('ready-to-show', () => {
     try { mainWindow.maximize(); } catch (_) {}
     mainWindow.show();
   });
+
+  // Renderer hata teşhisi — siyah ekran/donma vakalarında log'a düşer
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    log('RENDERER GONE: ' + JSON.stringify(details));
+  });
+  mainWindow.webContents.on('preload-error', (_e, p, err) => {
+    log('PRELOAD ERROR (' + p + '): ' + (err && err.stack || err));
+  });
+  mainWindow.webContents.on('console-message', (_e, level, message, line, source) => {
+    if (level >= 2) log(`RENDERER CONSOLE [${level}] ${source}:${line} → ${message}`);
+  });
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    log(`LOAD FAIL ${code} ${desc} url=${url}`);
+  });
+  // F12 / Ctrl+Shift+I → DevTools aç (siyah ekran / donma teşhisi için)
+  mainWindow.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown') return;
+    if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
+      mainWindow.webContents.toggleDevTools();
+      e.preventDefault();
+    }
+  });
+  if (process.env.NMAPGUI_DEVTOOLS === '1') mainWindow.webContents.openDevTools({ mode: 'detach' });
 
   // Küçültünce görev çubuğundan da gizle, sistem tepsisinde dur.
   mainWindow.on('minimize', (e) => {
