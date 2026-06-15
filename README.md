@@ -19,6 +19,10 @@
   <img alt="status" src="https://img.shields.io/badge/durum-aktif%20gelişim-orange">
 </p>
 
+<p align="center">
+  <a href="README.md">🇹🇷 Türkçe</a> · <a href="README.en.md">🇬🇧 English</a>
+</p>
+
 ---
 
 ## 🎯 Bu nedir?
