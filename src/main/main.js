@@ -104,6 +104,7 @@ function createWindow() {
     title: 'NmapGUI',
     icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
     frame: false,
+    show: false,                 // ready-to-show'da göster — gri flash önleyici
     backgroundColor: '#0e0e11',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -111,10 +112,12 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  // Pencereyi hemen göster — backgroundColor flash'ı maskeler, sonra maximize.
-  mainWindow.maximize();
-  mainWindow.show();
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  // ready-to-show: ilk frame hazır olunca maximize + show — flash önleyici
+  mainWindow.once('ready-to-show', () => {
+    try { mainWindow.maximize(); } catch (_) {}
+    mainWindow.show();
+  });
 
   // Küçültünce görev çubuğundan da gizle, sistem tepsisinde dur.
   mainWindow.on('minimize', (e) => {

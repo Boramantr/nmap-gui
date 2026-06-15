@@ -3,7 +3,7 @@ node_modules/
 
 # Derleme çıktıları
 dist/
-dist-v2/
+dist-v*/
 release/
 src/renderer/app.js
 
