@@ -513,7 +513,7 @@ function Topology({ hosts, gateway, onSelect }) {
 
 /* ============ Cihaz detay paneli ============ */
 function DeviceDetail({ host, t, onClose, onScan, onNuclei, onTool, onExploit, onShodan, onEvidence, onShot, note, onNote,
-  cveInfo, autoExploit, onAutoExploit, autoExpBusy, onEnrich, cveBusy }) {
+  cveInfo, autoExploit, onAutoExploit, autoExpBusy, onEnrich, cveBusy, arpCut, arpBusy, onCut }) {
   if (!host) return null;
   const risk = riskOf(host);
   const enumTools = toolsForHost(host);
@@ -544,6 +544,11 @@ function DeviceDetail({ host, t, onClose, onScan, onNuclei, onTool, onExploit, o
           <button className="dd-act" onClick={() => onEvidence(host.ip)}>📁 Kanıt</button>
           <button className="dd-act" onClick={() => onShot(host.ip)}>📸 Ekran</button>
         </div>
+        <button className={'arpcut-btn' + (arpCut ? ' active' : '')} disabled={arpBusy}
+          title="Bu cihazı ağdan koparır (ARP). Yalnızca kendi ağında kullan!"
+          onClick={() => onCut(host.ip)}>
+          {arpBusy ? '⏳ İşleniyor...' : arpCut ? '✅ Bağlantıyı geri aç' : '🚫 Cihazı ağdan kes'}
+        </button>
         {versions.some((v) => autoExploit[v]) && (
           <div className="autoexp-res">
             {versions.filter((v) => autoExploit[v]).map((v, i) => (
@@ -749,6 +754,48 @@ function App() {
     const id = Date.now() + Math.random();
     setToasts((ts) => [...ts, { id, msg, type }]);
     setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), 3500);
+  };
+
+  /* ARP cihaz kesme durumu (ip -> true) */
+  const [arpCutSet, setArpCutSet] = useState({});
+  const [arpBusy, setArpBusy] = useState({});
+  useEffect(() => {
+    window.api.onArpState && window.api.onArpState(({ target, active }) => {
+      setArpCutSet((s) => { const n = { ...s }; if (active) n[target] = true; else delete n[target]; return n; });
+      setArpBusy((s) => { const n = { ...s }; delete n[target]; return n; });
+    });
+    window.api.arpList && window.api.arpList().then((list) => {
+      if (Array.isArray(list)) setArpCutSet(Object.fromEntries(list.map((ip) => [ip, true])));
+    });
+  }, []);
+  const toggleCut = async (ip) => {
+    if (!ip) return;
+    const gw = gateway || (target ? target.replace(/\.\d+(\/\d+)?$/, '.1') : '');
+    if (arpCutSet[ip]) {
+      setArpBusy((s) => ({ ...s, [ip]: true }));
+      const r = await window.api.arpRestore(ip);
+      if (!r.ok) { toast(r.error || 'Geri alınamadı', 'error'); setArpBusy((s) => { const n = { ...s }; delete n[ip]; return n; }); }
+      else toast('Bağlantı geri açıldı: ' + ip, 'success');
+      return;
+    }
+    if (!gw) { toast('Gateway IP bilinmiyor — önce ağı tara.', 'error'); return; }
+    setArpBusy((s) => ({ ...s, [ip]: true }));
+    const chk = await window.api.arpCheck(gw);
+    if (!chk.ok) {
+      setArpBusy((s) => { const n = { ...s }; delete n[ip]; return n; });
+      if (!chk.hasTool) {
+        toast('arpspoof kuruluyor, bekleyin...', 'info');
+        const ins = await window.api.arpInstall();
+        if (!ins.ok) { toast('Kurulum başarısız. WSL kurulu mu?', 'error'); return; }
+        toast('arpspoof kuruldu, tekrar deneyin.', 'success');
+      } else {
+        toast(chk.hint || 'WSL ağı göremiyor (mirrored mod gerekli).', 'error');
+      }
+      return;
+    }
+    const r = await window.api.arpCut(ip, gw);
+    if (!r.ok) { toast(r.error || 'Kesilemedi', 'error'); setArpBusy((s) => { const n = { ...s }; delete n[ip]; return n; }); }
+    else toast('🚫 Cihaz ağdan kesildi: ' + ip, 'success');
   };
 
   /* notlar (localStorage) */
@@ -1968,7 +2015,8 @@ function App() {
                 onEvidence={(ip) => addEvidence(ip)} onShot={(ip) => shotEvidence(ip)}
                 note={notes[selHost.ip]} onNote={saveNote}
                 cveInfo={cveInfo} autoExploit={autoExploit} onAutoExploit={autoMatchExploits}
-                autoExpBusy={autoExpBusy} onEnrich={enrichCves} cveBusy={cveBusy} />}
+                autoExpBusy={autoExpBusy} onEnrich={enrichCves} cveBusy={cveBusy}
+                arpCut={!!arpCutSet[selHost.ip]} arpBusy={!!arpBusy[selHost.ip]} onCut={toggleCut} />}
             </div>
           </div>
         </div>

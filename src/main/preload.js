@@ -114,6 +114,13 @@ contextBridge.exposeInMainWorld('api', {
   onPortableProgress: (cb) => ipcRenderer.on('portable:progress', (_e, d) => cb(d)),
   onPortableDone: (cb) => ipcRenderer.on('portable:done', (_e, d) => cb(d)),
   onPortableAllDone: (cb) => ipcRenderer.on('portable:allDone', (_e, d) => cb(d)),
+  // ARP cihaz kesme (Network Access Control)
+  arpCheck: (gateway) => ipcRenderer.invoke('arp:check', { gateway }),
+  arpInstall: () => ipcRenderer.invoke('arp:install'),
+  arpCut: (target, gateway) => ipcRenderer.invoke('arp:cut', { target, gateway }),
+  arpRestore: (target) => ipcRenderer.invoke('arp:restore', { target }),
+  arpList: () => ipcRenderer.invoke('arp:list'),
+  onArpState: (cb) => ipcRenderer.on('arp:state', (_e, d) => cb(d)),
   // nuclei
   nucleiRun: (opts) => ipcRenderer.invoke('nuclei:run', opts),
   nucleiStop: () => ipcRenderer.invoke('nuclei:stop'),

